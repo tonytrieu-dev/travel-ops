@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
 
 [[package]]
@@ -1065,23 +1065,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pydantic-evals"
-version = "2.14.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "anyio" },
-    { name = "logfire-api" },
-    { name = "pydantic" },
-    { name = "pydantic-ai-slim" },
-    { name = "pyyaml" },
-    { name = "rich" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ce/c7/f069b75ce319b837d61812b5fd9984223f0397f9a7deacd806165e9248b4/pydantic_evals-2.14.0.tar.gz", hash = "sha256:dca9a2ba01e81f551c0fae4eb2b92761185e87f14088a13b3f84633b939654fc", size = 85110, upload-time = "2026-07-21T01:36:04.217Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/4e/aa/87a098358f94dba62e33f02c6ea51e7f82ad54ab9144bb327284e25b0070/pydantic_evals-2.14.0-py3-none-any.whl", hash = "sha256:ee28f279ae112dd9f0fb872fff4e4373911ee411fb51ab82230bcde5604a3f0a", size = 100441, upload-time = "2026-07-21T01:35:56.297Z" },
-]
-
-[[package]]
 name = "pydantic-graph"
 version = "2.14.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1567,7 +1550,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "pydantic-evals" },
     { name = "pyrefly" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -1592,7 +1574,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "pydantic-evals", specifier = ">=2.9" },
     { name = "pyrefly", specifier = ">=0.16" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-asyncio", specifier = ">=0.25" },

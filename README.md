@@ -49,8 +49,6 @@ and private service networks; see [deployment instructions](#running-it). See th
 - [Zero Trust control plane](docs/ARCHITECTURE.md#zero-trust-enterprise-network-overlay) — how the
   five required areas (identity and access management, MFA, segmentation, continuous monitoring,
   incident response) map to concrete controls, and what is deliberately out of scope.
-- [Evaluation results](#evaluation-results) — 84/84 deterministic assertions passed in a 12-run
-  sample; the optional quality judge passed 11/12.
 - [Zero-trust demo](#zero-trust-demo) — deterministic identities, MFA, attacks, containment, and
   security-operations queries.
 - [Engineering decisions](docs/DECISIONS.md) — deeper rationale and trade-offs.
@@ -207,22 +205,6 @@ With enforcement disabled for local development, the legacy Slack connector can 
 through the same state machine. Enforcement disables this path because a Slack identity is not an
 authenticated application identity and cannot prove ownership, role, or MFA.
 
-## Evaluation results
-
-The eval suite uses four cases crossing age (`24`, `78`) and fitness (`low`, `high`) on the same
-route, with recorded provider data and a live planner model. It checks output type, source URL
-grounding, tool-call trajectory, flight exclusion, low-fitness safety, and physical-load
-comparisons.
-
-| Run | Result |
-|---|---|
-| Deterministic evals | 84/84 assertions passed across 12 case-runs (100%) |
-| Optional `FitnessAppropriateness` judge | 11/12 passed |
-| Judge finding | One high-fitness/older case was too conservative despite passing numeric load checks |
-
-The judge result is intentionally reported rather than hidden: deterministic checks establish
-hard invariants, while pacing and suitability still need subjective review.
-
 ## Failure and recovery examples
 
 - **Stale fare:** after the 30-minute freshness window, approval or execution returns `EXPIRED`,
@@ -235,8 +217,8 @@ hard invariants, while pacing and suitability still need subjective review.
 - **Process crash:** DBOS resumes checkpointed planner or booking work from Postgres. Persisted
   execution events and run rows remain available after restart.
 
-The detailed implementation notes remain in [ARCHITECTURE.md](docs/ARCHITECTURE.md),
-[EVALS.md](docs/EVALS.md), and [DECISIONS.md](docs/DECISIONS.md).
+The detailed implementation notes remain in [ARCHITECTURE.md](docs/ARCHITECTURE.md)
+and [DECISIONS.md](docs/DECISIONS.md).
 
 ## Project status and limitations
 
@@ -250,8 +232,8 @@ controls, not a production identity or device-management system. Activity citati
 configured search provider; they do not independently verify every generated claim. The booking
 flow returns third-party checkout links and does not reserve, purchase, or hold a fare.
 
-See [Operational boundaries](docs/EVALS.md#operational-boundaries) for the detailed runtime,
-security, recovery, and integration limitations.
+See the [trust boundaries](docs/ARCHITECTURE.md#zero-trust-enterprise-network-overlay) for the
+detailed runtime, security, recovery, and integration limitations.
 
 ## What it does
 
@@ -287,8 +269,6 @@ security, recovery, and integration limitations.
   agent; a live activity feed streams its tool calls inline on the trip page, and a separate
   execution panel shows the full run trace across every trip. A "Your trips" tab lists every trip
   persisted for the demo account.
-- **Evals:** `pydantic-evals` — deterministic scoring by default, with optional LLM-judged
-  fitness-appropriateness scoring, separate from the pytest suite that gates system correctness.
 
 Live-provider operation requires accounts and API credentials for the configured services.
 Availability, pricing, and quotas are controlled by those providers and can change. For why each
@@ -444,23 +424,7 @@ browser segment spoofing, denial-threshold containment) is exercised against a l
 instance by `tests/test_security.py`; the append-only audit guarantee is enforced by a database
 trigger and checked in `tests/test_append_only.py`.
 
-### 6. Evals
-
-```bash
-cd backend
-uv run python -m evals.run --repeat 3
-# Optional Gemini judge:
-uv run python -m evals.run --with-judge
-```
-
-Scores the agent against a small dataset: do activity URLs come from the recorded search results,
-does the run follow the expected tool-call trajectory, and do low-fitness cases avoid activities
-labeled `high` intensity? These checks cover specific output properties; they do not establish
-overall itinerary correctness or traveler safety. The default suite is deterministic;
-`--with-judge` opts into the Gemini `FitnessAppropriateness` evaluator. The planner model call is
-live in both modes, so running evals consumes Cerebras quota.
-
-### 7. (Development only) Legacy Slack human-in-the-loop approvals
+### 6. (Development only) Legacy Slack human-in-the-loop approvals
 
 Only when `ZERO_TRUST_ENFORCED=false`, booking approval can be routed through Slack instead of the
 in-app UI. Slack's Interactivity callback needs a public HTTPS URL, so local development requires

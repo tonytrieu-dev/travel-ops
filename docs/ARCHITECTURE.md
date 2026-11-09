@@ -163,7 +163,7 @@ tool-calling loop, and separate browser interface. See "Why this stack, as a who
 - **Attributed itinerary, tailored to age/fitness:** `web_search` (Tavily) supplies activity
   research; `output_type=[ToolOutput(ItineraryOut),
   ToolOutput(ClarificationOut)]` (pinned to tool-call output rather than left on `auto`, since
-  `gpt-oss-120b`'s native structured-output envelope was unreliable — see `docs/EVALS.md`) plus
+  `gpt-oss-120b`'s native structured-output envelope was unreliable) plus
   four output-validator guardrails in `app/agent/planner.py`: `reject_unsafe_intensity` ties
   activity intensity labels to the traveler's fitness level, `reject_ungrounded_itinerary` rejects
   any activity whose source URL was not returned by web search during that run,
@@ -252,9 +252,6 @@ search behavior shared by the route and planner tool.
   resume after a crash.
 - **Observability** — `AgentRun`/`AgentRunStep` rows are derived from the real message history and
   usage, powering the execution panel.
-- **Eval scoring (`pydantic-evals`)** — deterministic evaluators by default, plus an opt-in
-  `LLMJudge` for fitness-appropriateness behind `--with-judge`. See [EVALS.md](EVALS.md) for the
-  exact-vs-subjective split and why.
 
 ## Request/agent flow
 

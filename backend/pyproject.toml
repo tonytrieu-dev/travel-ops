@@ -23,12 +23,11 @@ dependencies = [
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.25",
-    "pydantic-evals>=2.9",
     "pyrefly>=0.16",
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["app", "evals", "tests"]
+known-first-party = ["app", "tests"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -40,7 +39,7 @@ markers = [
 ]
 
 [tool.pyrefly]
-project-includes = ["app", "evals", "tests"]
+project-includes = ["app", "tests"]
 
 # SQLModel declares __tablename__ on its base in a way pyrefly reads as a descriptor, so every
 # table model trips bad-override. It is a pure framework artifact, not a real override bug.

@@ -29,8 +29,6 @@ def load_planner_client() -> tuple[str, str, str]:
 
 
 CEREBRAS_MODEL, CEREBRAS_BASE_URL, CEREBRAS_API_KEY_ENVIRONMENT = load_planner_client()
-GEMINI_JUDGE_MODEL = "gemini-3.6-flash"
-
 SEARCHAPI_BASE_URL = "https://www.searchapi.io/api/v1/search"
 SEARCHAPI_TIMEOUT_SECONDS = 60.0
 
@@ -113,7 +111,6 @@ class Settings(BaseSettings):
     )
 
     cerebras_api_key: SecretStr = Field(validation_alias=CEREBRAS_API_KEY_ENVIRONMENT)
-    gemini_api_key: SecretStr | None = None
     searchapi_api_key: SecretStr
     tavily_api_key: SecretStr
     database_url: str
