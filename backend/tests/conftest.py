@@ -193,7 +193,7 @@ class PlannerRunSpy:
     calls: int = 0
 
     async def __call__(
-        self, trip_id: int, prompt: str, trace_id: str | None = None
+        self, trip_id: int, prompt: str, trace_id: str | None = None, *providers: object
     ) -> ItineraryOut | ClarificationOut:
         self.calls += 1
         return self.output
@@ -216,6 +216,7 @@ def planner_spy() -> PlannerRunSpy:
 
 @pytest.fixture
 def client(
+    request: pytest.FixtureRequest,
     booking_options_spy: BookingOptionsFetchSpy,
     flight_search_spy: FlightSearchSpy,
     planner_spy: PlannerRunSpy,
@@ -244,10 +245,9 @@ def client(
     app.dependency_overrides[get_session] = _override_get_session
     monkeypatch.setattr("app.dbos_runtime.get_flight_provider", lambda settings: booking_options_spy)
     monkeypatch.setattr("app.routes.trips.get_flight_provider", lambda settings: flight_search_spy)
-    monkeypatch.setattr("app.dbos_runtime._run_planner_agent", planner_spy)
-    # Zero-trust is enforced by default in production; these legacy route tests predate the auth
-    # boundary and exercise trip/booking/rate-limit behavior with unauthenticated requests, so
-    # this fixture runs them unenforced. The enforced path has its own suite (test_security*.py).
+    if request.node.get_closest_marker("real_planner") is None:
+        monkeypatch.setattr("app.agent.execution.run_planner", planner_spy)
+    # Bypass validation only in the legacy route harness; runtime settings reject this posture.
     from app import config
 
     unenforced = config.Settings(
@@ -255,9 +255,8 @@ def client(
         searchapi_api_key="x",
         tavily_api_key="x",
         database_url=TEST_DATABASE_URL,
-        zero_trust_enforced=False,
     )
-    monkeypatch.setattr("app.config.get_settings", lambda: unenforced)
+    monkeypatch.setattr("app.config.get_settings", lambda: unenforced.model_copy(update={"zero_trust_enforced": False}))
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()

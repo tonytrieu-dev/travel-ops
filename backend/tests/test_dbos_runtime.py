@@ -8,18 +8,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import col
 
 from app.agent.planner import agent
-from app import dbos_runtime
 from app.dbos_runtime import run_planner_durable
-from app.models import AgentRun, AgentRunStep, AgentStepKind
+from app.models import AgentRun, AgentRunStep, AgentStepKind, FitnessLevel
 from tests.db_helpers import TEST_DATABASE_URL, seed_trip
 
-# Captured before the client fixture patches the module attribute with the planner spy; this test
-# needs the genuine durable workflow so the FunctionModel's failure actually propagates.
-_REAL_RUN_PLANNER_AGENT = dbos_runtime._run_planner_agent
-
-
-async def test_planner_failure_preserves_completed_exchanges(client, monkeypatch) -> None:
-    monkeypatch.setattr(dbos_runtime, "_run_planner_agent", _REAL_RUN_PLANNER_AGENT)
+@pytest.mark.real_planner
+async def test_planner_failure_preserves_completed_exchanges(client) -> None:
     engine = create_async_engine(TEST_DATABASE_URL)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     requests = 0
@@ -37,7 +31,7 @@ async def test_planner_failure_preserves_completed_exchanges(client, monkeypatch
             await session.commit()
         with agent.override(model=FunctionModel(fail_after_one_exchange)):
             with pytest.raises(RuntimeError, match="provider failed"):
-                await run_planner_durable(trip_id, "Plan a trip to Paris.")
+                await run_planner_durable(trip_id, "Plan a trip to Paris.", FitnessLevel.HIGH)
 
         async with session_factory() as session:
             runs = list(await session.scalars(

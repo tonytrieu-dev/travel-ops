@@ -17,6 +17,7 @@ from app.models import (
     AgentRun,
     AgentRunStep,
     ExecutionEvent,
+    FitnessLevel,
     FlightSearchResult,
     HITLBookingLog,
     Itinerary,
@@ -35,7 +36,7 @@ from app.schemas import (
     validate_trip_dates,
 )
 
-PlannerRunner = Callable[[int, str], Awaitable[PlannerOutput]]
+PlannerRunner = Callable[[int, str, FitnessLevel], Awaitable[PlannerOutput]]
 
 
 class TripError(Exception):
@@ -132,17 +133,34 @@ async def update_trip(session: AsyncSession, trip_id: int, data: TripRequestUpda
     criteria_changed = any(
         getattr(trip, field_name) != criteria_before[field_name] for field_name in _CRITERIA_FIELDS
     )
+    await _invalidate_derived_data_after_edit(session, trip, trip_id, criteria_before, criteria_changed)
+    await session.commit()
+    return trip
+
+
+async def _invalidate_derived_data_after_edit(
+    session: AsyncSession,
+    trip: TripRequest,
+    trip_id: int,
+    criteria_before: dict[str, object],
+    criteria_changed: bool,
+) -> None:
+    """A route/date change invalidates flights and the itinerary; a lesser itinerary-criteria
+    change (e.g. fitness) only invalidates the itinerary."""
     if criteria_changed:
         await _invalidate_trip_derived_data(session, trip_id)
         trip.status = TripStatus.CREATED
-    elif any(getattr(trip, field_name) != criteria_before[field_name] for field_name in _ITINERARY_CRITERIA_FIELDS):
-        itinerary = await session.scalar(select(Itinerary).where(col(Itinerary.trip_request_id) == trip_id))
-        if itinerary is not None:
-            await session.delete(itinerary)
-        trip.status = TripStatus.CREATED
-
-    await session.commit()
-    return trip
+        return
+    itinerary_criteria_changed = any(
+        getattr(trip, field_name) != criteria_before[field_name]
+        for field_name in _ITINERARY_CRITERIA_FIELDS
+    )
+    if not itinerary_criteria_changed:
+        return
+    itinerary = await session.scalar(select(Itinerary).where(col(Itinerary.trip_request_id) == trip_id))
+    if itinerary is not None:
+        await session.delete(itinerary)
+    trip.status = TripStatus.CREATED
 
 
 async def _trip_has_booking(session: AsyncSession, trip_id: int) -> bool:
@@ -220,13 +238,22 @@ async def get_or_create_itinerary(
     # record_event locks the trip row per step and would deadlock against a held row lock.
     await session.execute(text("SELECT pg_advisory_xact_lock(:trip_id)"), {"trip_id": trip_id})
 
+    # The request may have waited behind another planner while its initial ORM object stayed
+    # cached. Build the prompt from the state protected by the lock.
+    trip = await session.scalar(
+        select(TripRequest)
+        .where(col(TripRequest.id) == trip_id)
+        .execution_options(populate_existing=True)
+    )
+    assert trip is not None
+
     existing = await session.scalar(
         select(Itinerary).where(col(Itinerary.trip_request_id) == trip_id)
     )
     if existing is not None:
         return ItineraryOut(days=existing.days)
 
-    output = await run_planner(trip_id, _build_planner_prompt(trip))
+    output = await run_planner(trip_id, _build_planner_prompt(trip), trip.fitness_level)
     if isinstance(output, ClarificationOut | PlanTooComplexOut):
         return output
 
@@ -279,10 +306,19 @@ async def _execution_runs_for_trips(
             .order_by(col(AgentRun.started_at).desc())
         )
     )
+    return await _execution_run_details(session, agent_runs)
+
+
+async def _execution_run_details(
+    session: AsyncSession, agent_runs: list[AgentRun]
+) -> list[tuple[AgentRun, list[AgentRunStep], list[ExecutionEvent]]]:
+    if not agent_runs:
+        return []
+    run_ids = [run.id for run in agent_runs]
     all_steps = list(
         await session.scalars(
             select(AgentRunStep)
-            .where(col(AgentRunStep.agent_run_id).in_([run.id for run in agent_runs]))
+            .where(col(AgentRunStep.agent_run_id).in_(run_ids))
             .order_by(col(AgentRunStep.seq))
         )
     )
@@ -292,7 +328,7 @@ async def _execution_runs_for_trips(
     all_events = list(
         await session.scalars(
             select(ExecutionEvent)
-            .where(col(ExecutionEvent.trip_request_id).in_(trip_ids))
+            .where(col(ExecutionEvent.agent_run_id).in_(run_ids))
             .order_by(col(ExecutionEvent.seq))
         )
     )
@@ -330,9 +366,14 @@ async def get_execution_panel(
 
 
 async def list_execution_runs_for_user(
-    session: AsyncSession, user_id: int
-) -> list[tuple[AgentRun, list[AgentRunStep], list[ExecutionEvent]]]:
-    """Every agent run across every trip this user owns, newest first — the execution history tab
-    is global so a run doesn't disappear just because a newer trip has replaced it as "active"."""
-    trip_ids = [trip.id for trip in await list_trips(session, user_id) if trip.id is not None]
-    return await _execution_runs_for_trips(session, trip_ids)
+    session: AsyncSession, user_id: int, *, page_size: int = 20, before_run_id: int | None = None
+) -> tuple[list[tuple[AgentRun, list[AgentRunStep], list[ExecutionEvent]]], int | None]:
+    statement = select(AgentRun).join(TripRequest).where(col(TripRequest.user_id) == user_id)
+    if before_run_id is not None:
+        statement = statement.where(col(AgentRun.id) < before_run_id)
+    runs = list(await session.scalars(
+        statement.order_by(col(AgentRun.id).desc()).limit(page_size + 1)
+    ))
+    page = runs[:page_size]
+    next_before_run_id = page[-1].id if len(runs) > page_size else None
+    return await _execution_run_details(session, page), next_before_run_id

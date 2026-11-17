@@ -89,3 +89,13 @@ def test_containment_reports_to_sentry_only_when_dsn_configured(
     )
     security_evidence._report_containment(event)
     assert captured == ["Session contained: 5 denials revoked session session-a"]
+
+
+def test_runtime_configuration_cannot_disable_security(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ZERO_TRUST_ENFORCED", "false")
+    with pytest.raises(ValidationError, match="cannot be disabled"):
+        Settings(
+            _env_file=None,
+            cerebras_api_key="x", searchapi_api_key="x", tavily_api_key="x",
+            database_url="postgresql+asyncpg://localhost/travel_agent_test",
+        )

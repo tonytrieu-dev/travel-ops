@@ -39,9 +39,8 @@ def _settings(*, enforced: bool) -> Settings:
         searchapi_api_key="x",
         tavily_api_key="x",
         database_url=TEST_DATABASE_URL,
-        zero_trust_enforced=enforced,
-        zero_trust_signing_secret=_SIGNING_SECRET if enforced else "local-development-only",
-    )
+        zero_trust_signing_secret=_SIGNING_SECRET,
+    ).model_copy(update={"zero_trust_enforced": enforced})
 
 
 def _patch_settings(monkeypatch: pytest.MonkeyPatch, settings: Settings) -> Iterator[Settings]:
@@ -225,3 +224,32 @@ def test_concurrent_denials_open_one_incident_and_revoke_the_session(
             await engine.dispose()
 
     assert asyncio.run(_work()) == (1, True)
+
+
+@pytest.mark.parametrize(
+    "role,mfa_verified,require_mfa,denial",
+    [
+        ("traveler", True, True, "role is not allowed"),
+        ("security-operator", False, True, "MFA required"),
+        ("security-operator", True, True, None),
+    ],
+)
+def test_authorization_records_the_outcome_before_returning_or_raising(
+    enforced: Settings, role: str, mfa_verified: bool, require_mfa: bool, denial: str | None
+) -> None:
+    from app.security_admission import SecurityError
+
+    async def work(session: AsyncSession) -> None:
+        context = _context(await _add_user(session, role=role), mfa_verified=mfa_verified)
+        await authorize(context, session, action="security.read", resource="events", require_mfa=require_mfa)
+
+    if denial is not None:
+        with pytest.raises(SecurityError, match=denial):
+            run_db(work)
+    else:
+        run_db(work)
+    events = _events(action="security.read")
+    assert len(events) == 1
+    assert events[0].decision == ("deny" if denial else "allow")
+    assert events[0].mfa_required == require_mfa
+    assert events[0].mfa_verified == mfa_verified

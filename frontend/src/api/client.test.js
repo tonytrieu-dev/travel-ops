@@ -118,3 +118,23 @@ test("full browser storage does not reject successful login or MFA", async (cont
     assert.equal(getSessionId(), "authenticated-session")
   }
 })
+
+test("a delayed 401 from an old session cannot clear a replacement sign-in", async () => {
+  const { getBrowserSession } = await import("./client.ts")
+  let finishOldRequest
+  globalThis.fetch = () => new Promise((resolve) => { finishOldRequest = resolve })
+  const oldRequest = listTrips()
+  globalThis.fetch = async () => new Response(JSON.stringify({ session_id: "replacement" }))
+  await getBrowserSession()
+  let announcements = 0
+  const listener = () => { announcements++ }
+  window.addEventListener(AUTHENTICATION_REQUIRED_EVENT, listener)
+  try {
+    finishOldRequest(new Response(JSON.stringify({ code: "authentication_required", detail: "expired" }), { status: 401 }))
+    await assert.rejects(oldRequest)
+    assert.equal(getSessionId(), "replacement")
+    assert.equal(announcements, 0)
+  } finally {
+    window.removeEventListener(AUTHENTICATION_REQUIRED_EVENT, listener)
+  }
+})

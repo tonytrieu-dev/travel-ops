@@ -16,7 +16,7 @@ the narrower trade-offs behind each remaining dependency.
 
 ## PostgreSQL over a NoSQL store
 The datastore is Postgres 16, not a document/NoSQL store (MongoDB, DynamoDB, Firestore).
-**Alternative:** a document store. **Rejected** — this system's data is relational (a trip owns
+**Alternative:** a document store. **Rejected**; this system's data is relational (a trip owns
 flight results, an itinerary, and a booking log; a booking owns its transition history; an agent
 run owns its steps), and the booking FSM uses `SELECT ... FOR UPDATE` plus an audit write in the
 same transaction (see "HITL booking is a REST state machine" above). The append-only audit tables'
@@ -30,10 +30,10 @@ assumed by the architecture.
 
 ## Dependency Injection over constructing dependencies inline
 DB sessions and external clients (`FlightProvider`, `ActivityProvider`, the booking-options
-fetcher) are injected — via FastAPI `Depends` in routes, via constructor/dataclass args
-(`PlannerDeps`) in the agent — never instantiated inside the function that uses them.
+fetcher) are injected; via FastAPI `Depends` in routes, via constructor/dataclass args
+(`PlannerDeps`) in the agent; never instantiated inside the function that uses them.
 **Alternative:** construct them where needed (e.g. `LiveSearchApiProvider()` directly inside a
-route or the planner tool). **Rejected** — that couples every call site to one concrete
+route or the planner tool). **Rejected**; that couples every call site to one concrete
 implementation, so testing the booking state machine's concurrency (`test_double_execute_books_once`)
 or the planner's tool-calling loop would require mocking internals instead of handing in a real
 fake object that behaves like the thing it replaces.
@@ -42,7 +42,7 @@ fake object that behaves like the thing it replaces.
 All Postgres access lives in `app/repositories/*` (`trips_repository.py`, `booking_repository.py`);
 route handlers call a repository function and shape the HTTP response, never build a query or own
 a transaction boundary directly. **Alternative:** query the ORM directly from route handlers, the
-FastAPI default. **Rejected** — the state machine's guard-clause-plus-audit-write pattern
+FastAPI default. **Rejected**; the state machine's guard-clause-plus-audit-write pattern
 (see below) has to be atomic and consistent everywhere a transition happens; centralizing DB access
 in one layer is what makes "every transition writes an audit row in the same transaction" a
 property of the repository, not something each route has to remember to do correctly on its own.
@@ -51,24 +51,24 @@ property of the repository, not something each route has to remember to do corre
 The booking write moves through `PENDING → CONFIRMED → EXECUTED` (or `CANCELLED`/`EXPIRED`) via
 explicit `/bookings/*` calls driven by human clicks. **Alternative:** expose booking as an agent
 tool gated by an approval prompt. **Rejected** because a prompt-gated tool makes "a human
-confirmed first" a prompt-dependent hope; a state machine outside the agent makes it structural —
+confirmed first" a prompt-dependent hope; a state machine outside the agent makes it structural -
 the agent has no tool that can move booking state.
 
 ## Agent output is a union: `Itinerary | ClarificationOut`
 A genuinely ambiguous input (e.g. a destination name that could mean more than one place) can
 produce clarifying questions instead of an itinerary. **Alternative:** always return an itinerary and
-let the prompt beg the model to ask. **Rejected** — "ask, don't assume" as a type is enforced by
+let the prompt beg the model to ask. **Rejected**; "ask, don't assume" as a type is enforced by
 validation; as prose it's optional. Age/fitness level used to be the main trigger for this path
-until they became mandatory at trip intake (see the "mandatory intake fields" note below) — the
+until they became mandatory at trip intake (see the "mandatory intake fields" note below); the
 union stays for whatever's still genuinely ambiguous.
 
 ## Age and fitness level are mandatory intake fields
 `TripRequestCreate.age`/`.fitness_level` are required, not optional-then-clarified. **Alternative:**
 keep them optional and let the agent's `ClarificationOut` path ask when missing (the original
-design). **Rejected** — every itinerary needs them to pace activities, so the clarify-then-resubmit
+design). **Rejected**; every itinerary needs them to pace activities, so the clarify-then-resubmit
 round trip was required whenever either field was missing; validating at intake removes it.
 `TripRequest.age`/`.fitness_level` are now `NOT NULL`
-in the DB too (migration `12c1788c`) — a nullable column let a handful of legacy rows carry no
+in the DB too (migration `12c1788c`); a nullable column let a handful of legacy rows carry no
 age/fitness, and `reject_optional_clarification` blocks any clarifying question that mentions
 "age"/"fitness" once other trip details are present, so a genuinely-null row trapped the model
 asking for the one thing it wasn't allowed to ask about, burning all 3 output retries. Closing the
@@ -79,10 +79,10 @@ backfills legacy rows that have audit history and removes legacy rows that do no
 `POST /api/trips/{trip_id}/flights/search` lets a user look up flight offers for a trip directly,
 independent of `POST /api/trips/{trip_id}/plan`. **Alternative:** only expose flight search as the
 agent's internal `search_flights` tool, reachable solely by triggering full itinerary generation.
-**Rejected** —
+**Rejected** -
 flights and itineraries are different asks with different costs: a flight lookup is one
 deterministic SearchApi call, while planning drives the whole agent loop (Cerebras reasoning,
-`web_search`, output validation) — slower, and it spends real, rate-limited LLM quota
+`web_search`, output validation); slower, and it spends real, rate-limited LLM quota
 (`MAX_CONCURRENT_AGENT_RUNS` caps concurrent *LLM* calls specifically; see `app/rate_limit.py`, and
 note the flight-search route does not compete for that slot the way the planning route does).
 Forcing a user who just
@@ -91,14 +91,14 @@ needed an LLM at all. **Reflected in the two callers' cache behavior, not just t
 the direct route persists results and reuses them across trips (`persist=True,
 allow_cross_trip_cache=True`); the planner's tool call is deliberately more conservative
 (`persist=False, allow_cross_trip_cache=False`), since it's an internal grounding step inside one
-planning run, not a user-facing catalog browse — see the entry right below for where that shared
+planning run, not a user-facing catalog browse; see the entry right below for where that shared
 logic actually lives.
 
 ## Flight search is an extracted service, not duplicated route/tool logic
 `FlightSearchService` (`app/services/flight_search.py`) sits behind
 `POST /api/trips/{trip_id}/flights/search` and the planner's `search_flights` tool.
 **Alternative:** leave the caching, persistence, and ordering logic inline in `routes/trips.py`
-and `agent/planner.py`, as it originally was. **Rejected** — the
+and `agent/planner.py`, as it originally was. **Rejected**; the
 route and the planner tool need the *same* cheapest-first/cache/round-trip-completeness behavior
 (same-trip TTL reuse, cross-trip identical-search reuse, explicit unavailable results) and had
 drifted into two near-duplicate implementations; one service parameterized by
@@ -113,12 +113,12 @@ write tool to invoke.
 
 ## Audit tables are append-only at the database
 `booking_transition` and `execution_event` have `BEFORE UPDATE/DELETE` triggers that raise.
-**Alternative:** enforce immutability in application code. **Rejected** — app-level convention is
+**Alternative:** enforce immutability in application code. **Rejected**; app-level convention is
 one bug away from a silent tamper; the DB trigger holds regardless of the code path.
 
 ## DBOS for durable execution, crash-recovery only
 The planner run and booking execute are `@DBOS.workflow`s reusing the app's Postgres. Deliberately
-**no** DBOS-level dedup on top of the existing `SELECT ... FOR UPDATE` claim — one mechanism, one
+**no** DBOS-level dedup on top of the existing `SELECT ... FOR UPDATE` claim; one mechanism, one
 job (DBOS = crash recovery). **Alternative:** add `SetWorkflowID` dedup too. **Rejected** as
 redundant with the tested atomic claim.
 
@@ -129,9 +129,9 @@ workflow body. **Why:** without this, a crash-recovery replay re-runs the whole 
 from scratch, re-issuing an already-completed Cerebras call or search/activity call and paying
 for it twice. **Why free functions, not the bound methods directly:** `DBOS.step`'s decorator
 `setattr`s registration metadata onto its target, and bound methods don't support arbitrary
-attribute assignment — `_as_durable_step` wraps each bound method in a plain function instead.
+attribute assignment; `_as_durable_step` wraps each bound method in a plain function instead.
 **Why patched at the instance, not via a second agent/provider class:** the model is a shared,
-module-level singleton reused by every non-DBOS caller (tests, evals); `@DBOS.step` no-ops to a
+module-level singleton reused by every non-DBOS caller (tests); `@DBOS.step` no-ops to a
 plain call outside workflow context, so patching the singleton once at import is safe for those
 callers too, and cheaper than building a parallel `Agent`. The two providers are already built
 fresh per run inside `_run_planner_workflow`, so patching each instance right after construction
@@ -161,10 +161,10 @@ independently of this repository.
 Cerebras runs `gpt-oss-120b` directly through Pydantic AI's native `CerebrasModel`/
 `CerebrasProvider`. The model name lives in `config.py::CEREBRAS_MODEL`, and the app reads
 `CEREBRAS_API_KEY` from settings. **Alternative 1:** Groq, also serving `gpt-oss-120b`.
-**Rejected** — the available Groq account returned HTTP 413 rate-limit errors during multi-tool-call
+**Rejected**; the available Groq account returned HTTP 413 rate-limit errors during multi-tool-call
 runs, while the available Cerebras limits allowed the tested itineraries to complete. These are
 observations from development, not current plan guarantees. **Alternative 2:**
-`llama-3.3-70b-versatile`. **Rejected** — it emits its native `<function=...>` text format instead
+`llama-3.3-70b-versatile`. **Rejected**; it emits its native `<function=...>` text format instead
 of JSON tool calls, which Pydantic AI can't parse.
 
 ## SearchApi.io over Amadeus/Duffel/Skyscanner/raw scraping, for flights
@@ -192,7 +192,7 @@ so their source URLs provide attribution rather than independent factual verific
 the flight's stored `raw_offer`) work end-to-end for one-way and round-trip alike. Round-trip
 offers store a `departure_token`, not a real `booking_token` (see `_parse_offers`); resolving it
 costs one extra SearchApi call (`_resolve_return_booking_token`) that fetches the return-leg
-options and picks the cheapest — the current UI has no separate return-flight-selection step, so
+options and picks the cheapest; the current UI has no separate return-flight-selection step, so
 this is the same cheapest tie-break the rest of the app already uses. Any failure in that
 resolution, including an empty booking-options response, leaves execution `CONFIRMED` so the user can retry rather
 than creating a terminal `EXECUTED` record without a checkout handoff.
@@ -206,25 +206,23 @@ configuration surface without serving another implemented connector. The
 `notify_pending_approval`/`resolve_approve`/`resolve_reject` boundary keeps Slack-specific code
 isolated if another connector is added later.
 
-**Local dev needs a public callback URL.** Slack's Interactivity config can't POST to
-`localhost`, so `POST /api/slack/interactions` has to be reachable from the internet even during
-local development. `ngrok http 8000` is the tunnel used for this (see `docs/SLACK_SETUP.md`) —
-no code depends on ngrok specifically, any HTTPS tunnel pointed at port 8000 works the same way.
+The legacy test harness once used a public callback URL because Slack's Interactivity config could
+not POST to `localhost`. Runtime deployments do not enable this connector.
 
 ## Slack approve only confirms; execute stays in the frontend
-This legacy flow is development-only. Security enforcement disables Slack callbacks and
+This legacy flow is retained for tests only. Runtime configuration rejects disabled security enforcement. Enforcement disables Slack callbacks and
 notifications because a workspace signature does not authorize the clicking user to mutate
 another traveler's booking. Approvals use the app's ownership, role, and MFA checks instead.
 
 The Slack callback (`routes/slack.py`) calls only `confirm_booking`/`reject_booking`, never
 `execute_booking`. **Alternative:** let Approve in Slack also execute the booking.
-**Rejected** — Slack requires an ack within 3 seconds, and execute calls SearchApi and can take up
+**Rejected**; Slack requires an ack within 3 seconds, and execute calls SearchApi and can take up
 to `SEARCHAPI_TIMEOUT_SECONDS`, well past that budget; a fire-and-forget execute call from the
 Slack handler would leave Slack with no reliable way to report back whether it actually succeeded.
 Execute stays a synchronous action behind the frontend's existing Execute button, where the UI
 already discloses ("your flight hasn't been purchased") what execute does and doesn't do.
 **What this means for the approver:** clicking Approve in Slack records the human-in-the-loop
-decision — it moves the booking `PENDING_USER_CONFIRMATION → CONFIRMED` — but it doesn't hand back
+decision; it moves the booking `PENDING_USER_CONFIRMATION → CONFIRMED`; but it doesn't hand back
 checkout links; whoever approved still has to open the app and click Execute to get them. That's a
 two-step, two-surface flow. In-app approval and cancellation remain available even with Slack
 enabled, so a failed notification cannot block the user. **Possible extension:**
@@ -234,20 +232,20 @@ checkout links once it completes.
 ## Connector enablement is a DB-backed toggle, not just an env var
 `connector_setting.slack_enabled` is a single-row table flipped via `/api/connectors`, separate
 from whether Slack credentials exist in settings. **Alternative:** treat "credentials present" as
-"enabled." **Rejected** — that collapses configuration and intent into one flag, so any deployment
+"enabled." **Rejected**; that collapses configuration and intent into one flag, so any deployment
 with the env vars set would silently start posting to Slack; the toggle lets an operator configure
 Slack once and still flip it off at runtime without a restart or an env change.
 
 ## Trip history is a list endpoint plus a global execution feed, not per-trip-only
 `GET /api/trips` lists every trip the authenticated user owns, newest first; `GET /api/execution`
-mirrors that scoping across every `AgentRun` those trips own, also newest first — both live in
+mirrors that scoping across every `AgentRun` those trips own, also newest first; both live in
 `trips_repository.py` next to the existing per-trip `get_trip`/`get_execution_panel`, sharing the
 same user-scoping query rather than introducing a second concept. **Why global execution, not just
 per-trip:** the frontend used to require a trip to be "active" (in `localStorage`) before its
-execution history was visible at all — switching trips, or never having picked one, hid the tab
+execution history was visible at all; switching trips, or never having picked one, hid the tab
 entirely. A tab that only ever shows one trip's history can't answer "what has this agent done,
 period," which is the actual job of an execution/observability view. **Alternative considered:**
-keep it per-trip and add a trip switcher. **Rejected** — that still frames execution history as a
+keep it per-trip and add a trip switcher. **Rejected**; that still frames execution history as a
 property of one trip instead of an audit trail, and duplicates the trip-switching UI the new
 "Your trips" tab already provides. **Filtering is client-side, not query params:** both the route
 search and status filter on the execution tab, and the date-range filter on "Your trips," filter
@@ -264,7 +262,7 @@ Caller-supplied device headers cannot select a device bucket without the gateway
 successful certificate verification. This prevents users behind the gateway from sharing one
 IP bucket. Login also retains a separate normalized-email limit. A process-local concurrency
 cap limits real LLM calls; planning and flight search both have request caps. **Alternative:** no
-limiting, rely on each provider's own rate-limit response. **Rejected** — a burst of retries
+limiting, rely on each provider's own rate-limit response. **Rejected**; a burst of retries
 (accidental double-clicks or a buggy client) can consume provider quota before the upstream limit
 responds. This limiter reduces that risk for one running process; it resets on restart and is not
 a distributed quota-control mechanism.
@@ -272,7 +270,7 @@ a distributed quota-control mechanism.
 ## Current scope and deferred work
 HITL booking is a checkout-link handoff, not a purchase. The legacy development-only Slack
 connector supports one workspace and one approval interaction rather than a general chat-platform
-abstraction.
+abstraction. It is not a supported runtime integration.
 
 The security extension adds local password/TOTP authentication, server-backed sessions,
 application-level tenant/owner checks, certificate-backed device checks, and private application
@@ -285,3 +283,16 @@ environment; see the trust boundaries in [ARCHITECTURE.md](ARCHITECTURE.md#zero-
 Not implemented: production identity-provider integration, payment processing, episodic/semantic/
 procedural agent memory, or Saga compensation for a multi-step airline booking. Some code boundaries
 could support those changes, but their implementation effort and behavior have not been validated.
+
+## Runtime enforcement and authority isolation
+
+Runtime settings reject disabled security enforcement. Legacy route tests bypass settings
+validation explicitly in their fixture, rather than exposing an environment-based runtime escape.
+The certificate signing authority lives in `.device-authority`, separate from deployable
+certificate material. Provisioning containers mount only `.identity-provisioning` enrollment output.
+
+## Execution history is bounded by runs
+
+Global execution history pages owned runs by descending ID, then loads steps and events only
+for that page. It no longer materializes every trip and its complete history. The UI keeps
+older history reachable with page controls and labels filters as applying to the current page.

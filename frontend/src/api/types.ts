@@ -205,6 +205,7 @@ export interface ExecutionPanelOut {
 }
 
 export interface GlobalExecutionPanelOut {
+  next_before_run_id: number | null
   agent_runs: AgentRunOut[]
 }
 

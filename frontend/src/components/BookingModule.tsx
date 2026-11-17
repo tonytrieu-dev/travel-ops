@@ -10,6 +10,7 @@ import {
   requestBooking,
 } from "../api/client"
 import type { BookingLogOut, FlightOfferOut, TripRequestOut } from "../api/types"
+import { useRequestLifetime } from "../hooks/useRequestLifetime"
 
 interface BookingModuleProps {
   trip: TripRequestOut
@@ -21,7 +22,7 @@ const POLL_INTERVAL_MS = 1_000
 
 // SearchApi's real booking link isn't a plain URL: booking_request.url is Google's redirect
 // endpoint, and it only resolves to the real airline/OTA checkout when POSTed with post_data
-// as the body — a GET (plain <a href>) 404s. post_data is itself a urlencoded "key=value" pair.
+// as the body. A GET (plain <a href>) 404s. post_data is itself a urlencoded "key=value" pair.
 function bookingFormFields(postData: string): [string, string][] {
   return Array.from(new URLSearchParams(postData).entries())
 }
@@ -37,7 +38,7 @@ function bookingOptionPrice(option: Record<string, unknown>): number {
 }
 
 // SearchApi returns one booking_option per fare class/OTA, so the same provider often appears
-// several times — collapse to the cheapest option per provider instead of a wall of duplicate
+// several times. Collapse to the cheapest option per provider instead of a wall of duplicate
 // provider checkout buttons.
 function cheapestPerProvider(options: Record<string, unknown>[]): Record<string, unknown>[] {
   const cheapestByLabel = new Map<string, Record<string, unknown>>()
@@ -68,24 +69,24 @@ export function BookingModule({ trip, selectedOffer, onSearchAgain }: BookingMod
   const [announcement, setAnnouncement] = useState("")
   const [isSlackApprovalEnabled, setIsSlackApprovalEnabled] = useState<boolean | null>(null)
   const previousStateRef = useRef<string | null>(null)
+  const { captureRequest, invalidateRequests } = useRequestLifetime()
 
-  // Poll the server for real state while a booking is open and not yet terminal — the panel
-  // never fabricates a transition the server hasn't confirmed.
   useEffect(() => {
     if (!bookingLog || isLoading) return
     const terminal = ["EXECUTED", "CANCELLED", "EXPIRED"]
     if (terminal.includes(bookingLog.state)) return
 
     const poll = setInterval(async () => {
+      const request = captureRequest()
       try {
-        const refreshed = await getBooking(bookingLog.id)
-        setBookingLog(refreshed)
+        const refreshed = await getBooking(bookingLog.id, request.signal)
+        if (request.isCurrent()) setBookingLog(refreshed)
       } catch {
-        // Transient poll failures are not surfaced — the next successful poll self-corrects.
+        // Transient poll failures are not surfaced. The next successful poll self-corrects.
       }
     }, POLL_INTERVAL_MS)
     return () => clearInterval(poll)
-  }, [bookingLog, isLoading])
+  }, [bookingLog, isLoading, captureRequest])
 
   useEffect(() => {
     if (bookingLog && bookingLog.state !== previousStateRef.current) {
@@ -131,6 +132,7 @@ export function BookingModule({ trip, selectedOffer, onSearchAgain }: BookingMod
     : []
 
   const runAction = async (action: () => Promise<BookingLogOut>) => {
+    invalidateRequests()
     setIsLoading(true)
     setErrorMessage(null)
     try {
@@ -144,7 +146,7 @@ export function BookingModule({ trip, selectedOffer, onSearchAgain }: BookingMod
           try {
             setBookingLog(await getBooking(bookingLog.id))
           } catch {
-            // Fall through — errorMessage already reflects the expiry.
+            // Fall through. errorMessage already reflects the expiry.
           }
         }
       } else {

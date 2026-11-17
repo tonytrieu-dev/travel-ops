@@ -6,6 +6,60 @@ import { createElement } from "react"
 import { render, act, fireEvent } from "@testing-library/react"
 const { LoginPanel, default: App } = await import("./App.tsx")
 
+for (const role of ["trip-planner", "traveler"]) {
+  test(`${role} booking controls follow booking permissions after selecting a flight`, async (context) => {
+    localStorage.setItem("travel-agent.activeTripId", "1")
+    const trip = { id: 1, origin: "OAK", destination: "London", destination_airport: "LHR", depart_date: "2030-08-01" }
+    const offer = { id: 5, carrier: "Test Air", price_usd: 100, currency: "USD", stops: 0, legs: [], depart_at: "2030-08-01T10:00:00Z", arrive_at: "2030-08-01T14:00:00Z" }
+    let bookingRequests = 0
+    context.mock.method(globalThis, "fetch", async (url) => {
+      if (url.endsWith("/auth/config")) return response({ enforced: true })
+      if (url.endsWith("/auth/browser/session")) return response({ session_id: role, role, mfa_verified: true })
+      if (url.endsWith("/trips")) return response([trip])
+      if (url.endsWith("/snapshot")) return response({ trip, flight_search: { offers: [offer] }, plan: null })
+      if (url.endsWith("/booking/request")) { bookingRequests += 1; return response({ id: 2, state: "PENDING_USER_CONFIRMATION" }) }
+      if (url.endsWith("/execution")) return response({ agent_runs: [], events: [] })
+      throw Error(`unexpected request: ${url}`)
+    })
+    const view = render(createElement(App))
+    await act(async () => {})
+    fireEvent.click(view.getByRole("radio"))
+    assert.ok(view.getByRole("heading", { name: "Itinerary" }))
+    if (role === "trip-planner") {
+      assert.equal(view.queryByRole("heading", { name: "Continue to airline booking" }), null)
+      assert.equal(view.queryByRole("button", { name: "Review booking" }), null)
+    } else {
+      await act(async () => fireEvent.click(view.getByRole("button", { name: "Review booking" })))
+      assert.ok(view.getByRole("button", { name: "Approve this flight" }))
+    }
+    assert.equal(bookingRequests, role === "trip-planner" ? 0 : 1)
+  })
+}
+
+for (const role of ["traveler", "trip-planner", "security-operator", "platform-operator", "admin"]) {
+  test(`${role} navigation follows the verified session role`, async (context) => {
+    const requests = []
+    context.mock.method(globalThis, "fetch", async (url) => {
+      requests.push(url)
+      if (url.endsWith("/auth/config")) return response({ enforced: true })
+      if (url.endsWith("/auth/browser/session")) return response({ session_id: role, role, mfa_verified: true })
+      if (url.endsWith("/trips")) return response([])
+      if (url.endsWith("/monitoring")) return response({ stale: false, assessments: [] })
+      if (url.endsWith("/connectors")) return response({ slack: { configured: false, enabled: false } })
+      throw Error(`unexpected request: ${url}`)
+    })
+    const view = render(createElement(App))
+    await act(async () => {})
+    const history = ["trip-planner", "admin"].includes(role)
+    const security = ["security-operator", "platform-operator", "admin"].includes(role)
+    assert.equal(!!view.queryByRole("button", { name: "Agent execution history" }), history)
+    assert.equal(!!view.queryByRole("button", { name: "Approval history" }), history)
+    assert.equal(!!view.queryByRole("button", { name: "Security monitoring" }), security)
+    assert.equal(!!view.queryByRole("button", { name: "Connectors" }), ["security-operator", "admin"].includes(role))
+    if (role === "traveler") assert.equal(requests.some((url) => /connectors|execution|monitoring|bookings/.test(url)), false)
+  })
+}
+
 // F8: an expired/failed MFA challenge must be recoverable without a page reload.
 test("MFA restart returns to the email/password step", async (context) => {
   context.mock.method(globalThis, "fetch", async (url, init) => {

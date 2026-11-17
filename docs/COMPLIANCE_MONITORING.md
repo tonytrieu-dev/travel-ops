@@ -1,5 +1,10 @@
 # Security-control monitoring: implementation and findings
 
+Current validation (2026-11-17): 45 no-database backend tests passed, with 79 database tests
+deselected. The full backend run hit database connection errors during fixture setup and was
+stopped. All eight frontend test files, frontend build, and backend type checking passed.
+Historical counts below are not current full-suite results.
+
 October 29 follow-up: containment and evaluator windows now use exact session IDs,
 with sessionless attempts grouped separately. Incident uniqueness follows that boundary
 in migration `3b7d9f1a2c45`; evaluator version is 3. Failed password/MFA events retain
@@ -83,16 +88,14 @@ policies, personnel controls, retention assurance, and a general policy engine.
 
 ## Operation and demonstration
 
-1. With the application's normal environment and database configured, run
-   `cd backend && uv run alembic upgrade head`, then start the backend normally.
-2. If demo identities are needed, use the existing `uv run python -m scripts.seed_security_demo`.
-   They are synthetic classroom accounts, not production credentials.
-3. Sign in as `operator@tenant-a.test` using that script's credentials and an authenticator code.
+1. Follow the [deployment and enrollment instructions](../README.md#running-it).
+   Demo identities are synthetic classroom accounts, not production credentials.
+2. Sign in as `operator@tenant-a.test` using the demo credentials and an authenticator code.
    Open **Security monitoring**. Allow a minute for the first assessment after activity.
-4. Inspect the MFA result and its decision/success records. On an owner-run database the audit
+3. Inspect the MFA result and its decision/success records. On an owner-run database the audit
    check should fail and identify the bypass. With no denial burst, containment should say
    insufficient evidence. This shows all three outcomes without fabricating passing controls.
-5. The cross-tenant integration regression exercises five denied reads, revocation, rejection
+4. The cross-tenant integration regression exercises five denied reads, revocation, rejection
    of the revoked token, incident linkage, and a passing containment assessment. Reproduce in
    a separate test database with
    `uv run pytest -q tests/test_compliance.py tests/test_compliance_unit.py tests/test_append_only.py`.

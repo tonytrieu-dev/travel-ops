@@ -38,22 +38,22 @@ def _report_containment(event: SecurityEvent) -> None:
     )
 
 
-async def record_security_event(
-    session: AsyncSession,
+def _build_security_event(
     context: SecurityContext | None,
     *,
     action: str,
     resource: str,
     decision: str,
     reason: str,
-    request: Request | None = None,
-    tenant_id: str | None = None,
-    actor_user_id: int | None = None,
-    device_id: str | None = None,
-    session_id: str | None = None,
-    mfa_required: bool | None = None,
+    tenant_id: str | None,
+    actor_user_id: int | None,
+    device_id: str | None,
+    session_id: str | None,
+    mfa_required: bool | None,
 ) -> SecurityEvent:
-    event = SecurityEvent(
+    # Explicit arguments win; the verified context fills the rest. Both absent is "unknown",
+    # which marks an unauthenticated attempt rather than silently attributing it to an account.
+    return SecurityEvent(
         tenant_id=tenant_id or (context.tenant_id if context else "unknown"),
         actor_user_id=actor_user_id if actor_user_id is not None else (context.user_id if context else None),
         device_id=device_id or (context.device_id if context else "unknown"),
@@ -71,68 +71,120 @@ async def record_security_event(
         mfa_required=mfa_required,
         mfa_verified=context.mfa_verified if context else None,
     )
-    if decision == "deny":
-        # Serialize one denial window so concurrent transactions cannot each miss the threshold.
-        await session.execute(
-            select(
-                func.pg_advisory_xact_lock(
-                    func.hashtextextended(f"{event.tenant_id}\x1f{event.device_id}\x1f{event.session_id or ''}", 0)
-                )
+
+
+async def _lock_denial_window(session: AsyncSession, event: SecurityEvent) -> None:
+    """Serialize one denial window so concurrent transactions cannot each miss the threshold."""
+    await session.execute(
+        select(
+            func.pg_advisory_xact_lock(
+                func.hashtextextended(f"{event.tenant_id}\x1f{event.device_id}\x1f{event.session_id or ''}", 0)
             )
         )
+    )
+
+
+async def _recent_denials(session: AsyncSession, event: SecurityEvent) -> list[SecurityEvent]:
+    # A targeted account is not a verified source for an unauthenticated attempt, so the window is
+    # keyed on device/tenant/session rather than the actor.
+    since = utcnow() - timedelta(minutes=DENIAL_WINDOW_MINUTES)
+    return list(await session.scalars(
+        select(SecurityEvent).where(
+            col(SecurityEvent.device_id) == event.device_id,
+            col(SecurityEvent.tenant_id) == event.tenant_id,
+            col(SecurityEvent.decision) == "deny",
+            col(SecurityEvent.session_id) == event.session_id,
+            col(SecurityEvent.created_at) >= since,
+        )
+    ))
+
+
+async def _open_incident(session: AsyncSession, event: SecurityEvent) -> None:
+    scoped_to_session = bool(event.session_id)
+    await session.execute(
+        insert(SecurityIncident)
+        .values(
+            tenant_id=event.tenant_id,
+            actor_user_id=event.actor_user_id,
+            device_id=event.device_id,
+            session_id=event.session_id,
+            trigger_event_id=event.id,
+            reason=f"{DENIAL_THRESHOLD} denied requests in {DENIAL_WINDOW_MINUTES} minutes",
+        )
+        .on_conflict_do_nothing(
+            index_elements=["tenant_id", "device_id", "session_id"] if scoped_to_session else ["tenant_id", "device_id"],
+            index_where=text(
+                "status = 'open' AND session_id IS NOT NULL" if scoped_to_session
+                else "status = 'open' AND session_id IS NULL"
+            ),
+        )
+    )
+
+
+async def _contain_session(
+    session: AsyncSession, event: SecurityEvent, denied: list[SecurityEvent]
+) -> None:
+    """Revoke the offending session and record the revocation event. No-op if there is no live
+    session to contain."""
+    if not event.session_id:
+        return
+    security_session = await session.scalar(
+        select(SecuritySession).where(col(SecuritySession.session_id) == event.session_id)
+    )
+    if security_session is None:
+        return
+    security_session.revoked_at = utcnow()
+    session.add(SecurityEvent(
+        tenant_id=event.tenant_id, actor_user_id=event.actor_user_id,
+        session_id=event.session_id, device_id=event.device_id,
+        source_segment="api", target_segment="api", action="session.revoke",
+        resource=f"session:{event.session_id}", decision="allow",
+        reason="denial threshold containment", correlation_id=event.correlation_id,
+        policy_version=SECURITY_POLICY_VERSION,
+        enforcement_active=posture.enforcement_active(),
+        related_event_ids=[denial.id for denial in denied if denial.id is not None],
+        created_at=security_session.revoked_at,
+    ))
+    _report_containment(event)
+
+
+async def _handle_denial(session: AsyncSession, event: SecurityEvent) -> None:
+    """Detect a denial-threshold breach and contain it. Runs only for 'deny' events."""
+    denied = await _recent_denials(session, event)
+    if len(denied) < DENIAL_THRESHOLD:
+        return
+    await _open_incident(session, event)
+    await _contain_session(session, event, denied)
+
+
+async def record_security_event(
+    session: AsyncSession,
+    context: SecurityContext | None,
+    *,
+    action: str,
+    resource: str,
+    decision: str,
+    reason: str,
+    request: Request | None = None,
+    tenant_id: str | None = None,
+    actor_user_id: int | None = None,
+    device_id: str | None = None,
+    session_id: str | None = None,
+    mfa_required: bool | None = None,
+) -> SecurityEvent:
+    if context is None and device_id is None and request is not None and request.client is not None:
+        device_id = f"preauth:{request.client.host}"
+    event = _build_security_event(
+        context, action=action, resource=resource, decision=decision, reason=reason,
+        tenant_id=tenant_id, actor_user_id=actor_user_id, device_id=device_id,
+        session_id=session_id, mfa_required=mfa_required,
+    )
+    if decision == "deny":
+        await _lock_denial_window(session, event)
     session.add(event)
     await session.flush()
     if decision == "deny":
-        since = utcnow() - timedelta(minutes=DENIAL_WINDOW_MINUTES)
-        # A targeted account is not a verified source for an unauthenticated attempt.
-        denied = list(await session.scalars(
-            select(SecurityEvent).where(
-                col(SecurityEvent.device_id) == event.device_id,
-                col(SecurityEvent.tenant_id) == event.tenant_id,
-                col(SecurityEvent.decision) == "deny",
-                col(SecurityEvent.session_id) == event.session_id,
-                col(SecurityEvent.created_at) >= since,
-            )
-        ))
-        if len(denied) >= DENIAL_THRESHOLD:
-            await session.execute(
-                insert(SecurityIncident)
-                .values(
-                    tenant_id=event.tenant_id,
-                    actor_user_id=event.actor_user_id,
-                    device_id=event.device_id,
-                    session_id=event.session_id,
-                    trigger_event_id=event.id,
-                    reason=(
-                        f"{DENIAL_THRESHOLD} denied requests in "
-                        f"{DENIAL_WINDOW_MINUTES} minutes"
-                    ),
-                )
-                .on_conflict_do_nothing(
-                    index_elements=["tenant_id", "device_id", "session_id"] if event.session_id else ["tenant_id", "device_id"],
-                    index_where=text("status = 'open' AND session_id IS NOT NULL" if event.session_id else "status = 'open' AND session_id IS NULL"),
-                )
-            )
-            if event.session_id:
-                security_session = await session.scalar(
-                    select(SecuritySession).where(
-                        col(SecuritySession.session_id) == event.session_id
-                    )
-                )
-                if security_session is not None:
-                    security_session.revoked_at = utcnow()
-                    session.add(SecurityEvent(
-                        tenant_id=event.tenant_id, actor_user_id=event.actor_user_id,
-                        session_id=event.session_id, device_id=event.device_id,
-                        source_segment="api", target_segment="api", action="session.revoke",
-                        resource=f"session:{event.session_id}", decision="allow",
-                        reason="denial threshold containment", correlation_id=event.correlation_id,
-                        policy_version=SECURITY_POLICY_VERSION,
-                        enforcement_active=posture.enforcement_active(),
-                        related_event_ids=[denial.id for denial in denied if denial.id is not None],
-                        created_at=security_session.revoked_at,
-                    ))
-                    _report_containment(event)
+        await _handle_denial(session, event)
     await session.commit()
     return event
 
@@ -193,5 +245,5 @@ async def get_security_incidents(
     if tenant_id is not None:
         statement = statement.where(col(SecurityIncident.tenant_id) == tenant_id)
     return list(await session.scalars(
-        statement.order_by(col(SecurityIncident.created_at).desc())
+        statement.order_by(col(SecurityIncident.created_at).desc()).limit(200)
     ))

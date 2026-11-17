@@ -1,13 +1,7 @@
-Current implementation update (2026-10-31): ordinary accounts now enroll unique TOTP secrets;
-the public legacy secret is retired by migration. Origin-policy denials are audited without
-attribution, and `platform-operator` can investigate unattributed and cross-tenant security
-evidence. The optional [isolated deployment](../README.md#running-it) adds CA-validated device
-certificates, private networks and a restricted runtime database role. The backend suite
-passes 88 cases; a real restricted database login rejects audit mutation/DDL and starts DBOS
-in its own schema. Docker network isolation and the gateway handshake have not been executed
-in this environment, so the older gap analysis below remains historical deployment evidence.
-
 # Zero-trust evaluation
+
+For current validation provenance and deployment limitations, see
+[the findings record](ZERO_TRUST_FINDINGS.md). Counts dated below are historical runs.
 
 Historical validation on 2026-10-14 used real PostgreSQL 14.24 in an isolated local cluster, Python 3.13.11,
 and migrations through `5d9f1b3c4e67`. FastAPI requests run through `TestClient`; flight/search and
@@ -24,7 +18,8 @@ reported **0 errors**.
 | MFA-enabled login | Pending token rejected; enrolled legacy owner's verified token reaches original trip | `test_pending_mfa_token_cannot_reach_protected_routes`, `test_enrolled_legacy_owner_can_access_original_trip` |
 | Tampered or expired token | HTTP 401 | Separate signature and expiry regressions in `test_security.py` |
 | Role/MFA escalation | Denied by policy | `test_password_only_login_allows_reads_but_not_booking_approval`, `test_monitoring_requires_operator_mfa_and_hides_other_tenants` |
-| Global execution role boundary | Security operator receives 403 and a persisted `trip.read` denial | `test_global_execution_history_applies_trip_read_role_policy` |
+| Global execution role boundary | Security operator receives 403 with a persisted `execution.history.read` denial | `test_global_execution_history_applies_history_role_policy` |
+| History collection permissions | Travelers cannot read global execution or approval history; trip planners and admins retain owned history | `test_history_collections_require_history_permissions` |
 | Cross-tenant access and containment | Five non-disclosing 404 responses, then 401; incident trigger linked to passing containment assessment | `test_compliance.py::test_cross_tenant_denials_produce_traceable_containment` |
 | Browser internal-segment spoof | HTTP 403 and persisted denial event | `test_segment_spoof_header_is_rejected_as_403_through_the_handler`, security policy tests |
 | Append-only enforcement | UPDATE/DELETE rejected for booking transitions, execution events, and security events; security-event TRUNCATE rejected | `test_append_only.py` |
@@ -101,7 +96,7 @@ Recorded local result (100/100 HTTP 200 responses in each measured mode):
 |---|---|---|---|
 | Development baseline | 48.033 ms | 51.727 ms | 83.48 requests/s |
 | Enforced authentication | 52.352 ms | 60.061 ms | 75.53 requests/s |
-| Enforced minus baseline | +4.319 ms | +8.334 ms | — |
+| Enforced minus baseline | +4.319 ms | +8.334 ms | Not measured |
 
 These are recorded in-process HTTP-harness measurements with test-only unpooled database
 connections; they include database and audit work, but exclude real network/TLS, browser, and

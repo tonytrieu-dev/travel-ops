@@ -8,7 +8,7 @@ dependencies = [
     "uvicorn[standard]>=0.34",
     "pydantic>=2.10",
     "pydantic-settings>=2.7",
-    "pydantic-ai-slim[google,openai]>=2.9",
+    "pydantic-ai-slim[openai]>=2.9",
     "dbos>=1.0",
     "sqlmodel>=0.0.22",
     "asyncpg>=0.30",
@@ -35,6 +35,7 @@ asyncio_default_fixture_loop_scope = "session"
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
+    "real_planner: exercise planner execution instead of the route harness runner",
     "no_database: test does not require the PostgreSQL integration fixture",
 ]
 

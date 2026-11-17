@@ -136,9 +136,11 @@ def test_booking_admission_uses_original_quote_age(
     if quote_age_minutes == 16:
         assert response.status_code == 409, response.text
         assert response.json()["code"] == "booking_expired"
-        history = enforced_client.get("/api/bookings", headers=headers)
-        assert history.status_code == 200, history.text
-        assert history.json() == [], "rejected stale quotes must not create active bookings"
+        from app.repositories.booking_repository import list_bookings_with_transitions_for_user
+
+        assert run_db(lambda session: list_bookings_with_transitions_for_user(session, user_id)) == [], (
+            "rejected stale quotes must not create active bookings"
+        )
         return
 
     assert response.status_code == 200, response.text

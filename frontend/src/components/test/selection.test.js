@@ -6,6 +6,26 @@ import { createElement } from "react"
 import { render, act, fireEvent } from "@testing-library/react"
 const { CompliancePanel } = await import("../CompliancePanel.tsx")
 
+for (const outboundStops of [0, 1]) {
+test(`round-trip offers remain selectable with accurate direction stops (outbound=${outboundStops}, return=1)`, async () => {
+  const { FlightSearch } = await import("../FlightSearch.tsx")
+  const leg = (departure_airport, arrival_airport) => ({ departure_airport, arrival_airport, depart_at: "2030-01-01T10:00:00Z", arrive_at: "2030-01-01T14:00:00Z" })
+  const legs = [...(outboundStops ? [leg("OAK", "SFO"), leg("SFO", "ONT")] : [leg("OAK", "ONT")]), leg("ONT", "SFO"), leg("SFO", "OAK")]
+  const offer = { id: 4, carrier: "Connecting Air", stops: outboundStops, legs, price_usd: 250, currency: "USD", depart_at: "2030-01-01T10:00:00Z", arrive_at: "2030-01-01T14:00:00Z" }
+  let selected
+  const view = render(createElement(FlightSearch, {
+    trip: { origin: "OAK", destination_airport: "ONT", depart_date: "2030-01-01", return_date: "2030-01-05" },
+    searchResult: { offers: [offer] }, isLoading: false, selectedOfferId: null,
+    onSearchFlights() {}, onSearchNewFlight() {}, onSelectOffer(value) { selected = value },
+  }))
+  assert.match(view.getByText("Outbound").parentElement.textContent, outboundStops ? /1 stop/ : /Nonstop/)
+  assert.match(view.getByText("Return").parentElement.textContent, /1 stop/)
+  assert.equal(view.queryByText("Nonstop", { exact: true }), null, "a round trip must not have a misleading overall nonstop label")
+  fireEvent.click(view.getByRole("radio"))
+  assert.equal(selected, offer)
+})
+}
+
 test("switching assessments discards outstanding evidence responses", async (context) => {
   const pending = deferred()
   const assessment = (id) => ({ id, assessed_at: "2026-10-29", window_start: "2026-10-28", window_end: "2026-10-29", evaluator_version: "1", results: [{ control: "privileged_mfa", status: "pass", summary: "checked", evidence_event_ids: [id], details: {} }] })
@@ -16,4 +36,25 @@ test("switching assessments discards outstanding evidence responses", async (con
   fireEvent.change(view.getByRole("combobox"), { target: { value: "2" } })
   await act(async () => pending.resolve(response({ marker: "obsolete evidence" })))
   assert.doesNotMatch(view.container.textContent, /obsolete evidence/)
+})
+
+test("execution history keeps older pages reachable without fetching every run", async (context) => {
+  const { ExecutionPanel } = await import("../ExecutionPanel.tsx")
+  const requestedCursors = []
+  const run = (id) => ({ id, trip_request_id: 1, status: "completed", model: "test", total_input_tokens: 0, total_output_tokens: 0, total_ms: 1, started_at: "2030-01-01T00:00:00Z", steps: [], events: [] })
+  context.mock.method(globalThis, "fetch", async (url) => {
+    const cursor = new URL(url).searchParams.get("before_run_id")
+    requestedCursors.push(cursor)
+    return response(cursor ? { agent_runs: [run(1)], next_before_run_id: null } : { agent_runs: [run(2)], next_before_run_id: 2 })
+  })
+  const view = render(createElement(ExecutionPanel, { trips: [], isRunActive: false }))
+  await act(async () => {})
+  assert.ok(view.getByText("Run #2"))
+  assert.equal(view.getByRole("button", { name: "Newer runs" }).disabled, true)
+  await act(async () => fireEvent.click(view.getByRole("button", { name: "Older runs" })))
+  assert.ok(view.getByText("Run #1"))
+  assert.equal(view.getByRole("button", { name: "Older runs" }).disabled, true)
+  await act(async () => fireEvent.click(view.getByRole("button", { name: "Newer runs" })))
+  assert.ok(view.getByText("Run #2"))
+  assert.deepEqual(requestedCursors, [null, "2", null])
 })

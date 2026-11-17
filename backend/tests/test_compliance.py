@@ -1,8 +1,9 @@
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlmodel import col
 
-from app.models import ComplianceAssessment, SecurityEvent, utcnow
+from app.models import ComplianceAssessment, SecurityEvent, SecurityIncident, utcnow
 from app.repositories.compliance_repository import assess_security_controls
+from app.security_evidence import get_security_incidents
 from tests.db_helpers import run_db
 from tests.test_security_integration import enforced_client, _owned_booking, _seed_user, _sign_in
 
@@ -70,6 +71,37 @@ def test_monitoring_requires_operator_mfa_and_hides_other_tenants(enforced_clien
     assert len(history["assessments"]) == 2
 
 
+def test_security_event_indexes_exist() -> None:
+    async def _index_names(session):
+        return set(await session.scalars(text("""
+            SELECT indexname
+            FROM pg_indexes
+            WHERE schemaname = current_schema() AND tablename = 'security_event'
+        """)))
+
+    index_names = run_db(_index_names)
+    assert "ix_security_event_tenant_created_at" in index_names
+    assert "ix_security_event_denial_window" in index_names
+
+
+def test_security_incident_history_is_bounded() -> None:
+    async def _seed_incidents(session):
+        session.add_all([
+            SecurityIncident(
+                tenant_id="tenant-a", device_id=f"device-{index}",
+                reason="test", status="open", created_at=utcnow(),
+            )
+            for index in range(201)
+        ])
+
+    run_db(_seed_incidents)
+
+    async def _read_incidents(session):
+        return await get_security_incidents(session, "tenant-a")
+
+    assert len(run_db(_read_incidents)) == 200
+
+
 def test_cross_tenant_denials_produce_traceable_containment(enforced_client) -> None:
     _seed_user("attacker@a.test", "tenant-a", "traveler", "attacker-a")
     victim = _seed_user("victim@b.test", "tenant-b", "traveler", "victim-b")
@@ -91,7 +123,6 @@ def test_cross_tenant_denials_produce_traceable_containment(enforced_client) -> 
 
 
 def test_audit_assessment_rejects_conditional_mutation_trigger() -> None:
-    from sqlalchemy import text
     from app.models import User
 
     async def _setup(session):

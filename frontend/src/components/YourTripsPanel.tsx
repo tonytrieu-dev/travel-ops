@@ -38,13 +38,13 @@ function isWithinRange(createdAt: string, range: DateRangeFilter): boolean {
 }
 
 function formatDate(value: string | null | undefined): string {
-  return value ? new Date(value).toLocaleDateString() : "—"
+  return value ? new Date(value).toLocaleDateString() : "Not available"
 }
 
 // new Date("YYYY-MM-DD") is UTC midnight, which renders the day before in negative-offset zones;
 // parse the parts as a local calendar date instead.
 function formatDateOnly(value: string | null | undefined): string {
-  if (!value) return "—"
+  if (!value) return "Not available"
   const [year, month, day] = value.split("-").map(Number)
   return new Date(year, month - 1, day).toLocaleDateString()
 }
@@ -60,7 +60,7 @@ export function YourTripsPanel({ trips, selectedTripId, onSelectTrip }: YourTrip
   if (trips.length === 0) {
     return (
       <p className="rounded-xl border border-dashed border-slate-300 bg-white p-6 text-sm text-slate-500">
-        No trips yet — create one from "Plan a trip" to see it here.
+        No trips yet. Create one from "Plan a trip" to see it here.
       </p>
     )
   }
@@ -99,16 +99,15 @@ export function YourTripsPanel({ trips, selectedTripId, onSelectTrip }: YourTrip
                 return (
                   <tr
                     key={trip.id}
-                    onClick={() => onSelectTrip(trip.id)}
                     aria-current={isSelected ? "true" : undefined}
-                    className={`cursor-pointer border-b border-slate-100 last:border-0 ${
+                    className={`border-b border-slate-100 last:border-0 ${
                       isSelected ? "bg-indigo-50" : "hover:bg-slate-50"
                     }`}
                   >
-                    <td
-                      className={`px-4 py-3 font-medium ${isSelected ? "text-indigo-700" : "text-slate-900"}`}
-                    >
-                      {trip.origin} → {trip.destination_airport}
+                    <td className={`px-4 py-3 font-medium ${isSelected ? "text-indigo-700" : "text-slate-900"}`}>
+                      <button type="button" onClick={() => onSelectTrip(trip.id)} className="w-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500">
+                        {trip.origin} → {trip.destination_airport}
+                      </button>
                     </td>
                     <td className="px-4 py-3 text-slate-600">{formatDateOnly(trip.depart_date)}</td>
                     <td className="px-4 py-3 text-slate-600">{formatDateOnly(trip.return_date)}</td>

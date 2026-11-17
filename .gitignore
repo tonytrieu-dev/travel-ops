@@ -1,11 +1,12 @@
 # Secrets
 .env
+.env.*
+!.env.example
 
 # Python
 __pycache__/
 *.py[cod]
-.venv/
-backend/.venv/
+.venv*/
 *.egg-info/
 .pytest_cache/
 .pyrefly/
@@ -28,7 +29,7 @@ backend/.claude/
 .agents/
 .claude/
 .kiro/
-agent/
+/agent/
 skills-lock.json
 transcript.json
 
@@ -43,3 +44,9 @@ codex-session-*.md
 backend/baml_sdk/
 
 .device-certificates/
+.device-authority/
+
+.identity-provisioning/
+
+# Local CI draft
+/.github/workflows/checks.yml

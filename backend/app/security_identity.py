@@ -41,38 +41,61 @@ class SecurityContext:
 # --- Inbound token verification: decode a bearer token and reconcile its claims with live state
 
 
-def _context_from_claims(claims: dict[str, object], user: User) -> SecurityContext:
-    if user.id is None or user.disabled:
-        raise HTTPException(status_code=403, detail="identity is disabled or unknown")
+def _claims_mismatch_persisted_state(
+    user: User, *, tenant_id: str, device_id: str, role: str, mfa_verified: bool
+) -> bool:
+    """The token's claims must match the account's live tenant, device, role, and MFA enrollment."""
+    return any((
+        user.tenant_id != tenant_id,
+        user.device_id != device_id,
+        user.role != role,
+        mfa_verified != user.mfa_enabled,
+    ))
+
+
+def _validated_claim_fields(claims: dict[str, object]) -> tuple[str, str, str, bool, str]:
+    """Extract and type-check the token claims, failing fast on any malformed field."""
     expires_at = claims.get("expires_at")
     if not isinstance(expires_at, int) or expires_at < time.time():
         raise HTTPException(status_code=401, detail="zero-trust access token expired")
-    tenant_id = claims.get("tenant_id")
-    device_id = claims.get("device_id")
-    role = claims.get("role")
-    mfa_verified = claims.get("mfa_verified")
-    session_id = claims.get("session_id")
-    if not all(isinstance(value, str) for value in (tenant_id, device_id, role)):
+    tenant_id, device_id, role = claims.get("tenant_id"), claims.get("device_id"), claims.get("role")
+    if not (isinstance(tenant_id, str) and isinstance(device_id, str) and isinstance(role, str)):
         raise HTTPException(status_code=401, detail="invalid identity claims")
-    assert isinstance(tenant_id, str)
-    assert isinstance(device_id, str)
-    assert isinstance(role, str)
+    mfa_verified = claims.get("mfa_verified")
     if not isinstance(mfa_verified, bool):
         raise HTTPException(status_code=401, detail="invalid MFA claim")
+    session_id = claims.get("session_id")
     if not isinstance(session_id, str):
         raise HTTPException(status_code=401, detail="invalid session claim")
-    if (
-        user.tenant_id != tenant_id
-        or user.device_id != device_id
-        or user.role != role
-        or (mfa_verified and not user.mfa_enabled)
-        or (user.mfa_enabled and not mfa_verified)
+    return tenant_id, device_id, role, mfa_verified, session_id
+
+
+def _context_from_claims(claims: dict[str, object], user: User) -> SecurityContext:
+    if user.id is None or user.disabled:
+        raise HTTPException(status_code=403, detail="identity is disabled or unknown")
+    tenant_id, device_id, role, mfa_verified, session_id = _validated_claim_fields(claims)
+    if _claims_mismatch_persisted_state(
+        user, tenant_id=tenant_id, device_id=device_id, role=role, mfa_verified=mfa_verified
     ):
         raise HTTPException(status_code=403, detail="identity claims do not match persisted state")
     return SecurityContext(
         tenant_id=tenant_id, user_id=user.id, device_id=device_id, role=role,
         mfa_verified=mfa_verified, session_id=session_id,
     )
+
+
+def _session_is_invalid(
+    persisted_session: SecuritySession | None, user: User, context: SecurityContext
+) -> bool:
+    """The live session must still exist, belong to this user/device, be unrevoked and unexpired,
+    and match the token's MFA state."""
+    return persisted_session is None or any((
+        persisted_session.user_id != user.id,
+        persisted_session.revoked_at is not None,
+        persisted_session.expires_at <= utcnow(),
+        persisted_session.device_id != context.device_id,
+        persisted_session.mfa_verified != context.mfa_verified,
+    ))
 
 
 async def authenticate_identity(
@@ -91,14 +114,7 @@ async def authenticate_identity(
     persisted_session = await session.scalar(
         select(SecuritySession).where(col(SecuritySession.session_id) == context.session_id)
     )
-    if (
-        persisted_session is None
-        or persisted_session.user_id != user.id
-        or persisted_session.revoked_at is not None
-        or persisted_session.expires_at <= utcnow()
-        or persisted_session.device_id != context.device_id
-        or persisted_session.mfa_verified != context.mfa_verified
-    ):
+    if _session_is_invalid(persisted_session, user, context):
         raise HTTPException(status_code=401, detail="session revoked or expired")
     return user, context
 
@@ -170,11 +186,21 @@ async def create_security_session(
     return security_session
 
 
+def _mfa_ineligible(user: User, security_session: SecuritySession) -> bool:
+    """Only an enabled, enrolled, non-disabled identity on a live session can complete MFA."""
+    return (
+        user.disabled
+        or not user.mfa_enabled
+        or not user.totp_secret
+        or security_session.revoked_at is not None
+    )
+
+
 async def verify_session_mfa(
     session: AsyncSession, security_session: SecuritySession, code: str
 ) -> bool:
     user = await session.get(User, security_session.user_id)
-    if user is None or user.disabled or not user.mfa_enabled or not user.totp_secret or security_session.revoked_at is not None:
+    if user is None or _mfa_ineligible(user, security_session):
         return False
     timestamp = int(time.time())
     if not hmac.compare_digest(totp_code(user.totp_secret, timestamp), code):
@@ -230,17 +256,27 @@ def _token_out(security_session: SecuritySession, user: User, mfa_required: bool
 # --- Request flows: the module's external interface called by the auth routes and dependencies
 
 
+async def _credentials_rejected(user: User | None, body: LoginRequest) -> bool:
+    """A login is rejected unless the account exists, is enabled, matches the submitted device,
+    and the password verifies. Password check runs last (and off-thread) so it only runs when the
+    cheaper identity checks pass."""
+    if user is None or user.disabled or user.device_id != body.device_id:
+        return True
+    return not await run_in_threadpool(password_matches, user, body.password)
+
+
 async def login_identity(
     session: AsyncSession, body: LoginRequest, request: Request
 ) -> TokenOut:
     user = await session.scalar(select(User).where(col(User.email) == body.email))
-    if user is None or user.disabled or user.device_id != body.device_id or not await run_in_threadpool(password_matches, user, body.password):
+    if await _credentials_rejected(user, body):
         await record_authentication_failure(
             reason="invalid credentials", tenant_id=user.tenant_id if user else None,
             resource=f"user:{user.id}" if user else "identity",
             request=request,
         )
         raise HTTPException(status_code=401, detail="invalid credentials")
+    assert user is not None  # _credentials_rejected returns True when user is None
     try:
         verify_device_certificate(request, user.device_id)
     except HTTPException:

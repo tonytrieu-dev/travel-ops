@@ -29,6 +29,8 @@ from app.security_admission import (
 )
 from app.security_segment import enforce_api_segment
 from app.request_context import correlation_id
+from app.security_identity import SecurityContext
+from app.dependencies import get_security_context
 from app.schemas import (
     BookingLogOut,
     BookingRequestCreate,
@@ -113,7 +115,7 @@ async def _notify_slack_if_enabled(session: AsyncSession, booking: HITLBookingLo
 )
 async def list_bookings(
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(admit_collection_route("trip.read", "bookings")),
+    user: User = Depends(admit_collection_route("booking.history.read", "bookings")),
 ) -> list[BookingLogOut]:
     """Backs the global approval-history tab: every booking this user requested, each with its
     append-only transition trail."""
@@ -158,8 +160,17 @@ async def confirm_booking(
     responses=_EXECUTE_RESPONSES,
     dependencies=[Depends(admit_booking_route("booking.execute", require_mfa=True))],
 )
-async def execute_booking(log_id: int) -> BookingLogOut:
-    return await execute_booking_durable(log_id, correlation_id())
+async def execute_booking(
+    log_id: int,
+    context: SecurityContext = Depends(get_security_context),
+) -> BookingLogOut:
+    return await execute_booking_durable(
+        log_id,
+        context.user_id,
+        context.tenant_id,
+        context.session_id or "",
+        correlation_id(),
+    )
 
 
 @router.post(

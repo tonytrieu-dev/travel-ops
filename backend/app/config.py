@@ -36,14 +36,6 @@ SLACK_API_TIMEOUT_SECONDS = 10.0
 
 # RecordedProvider replays real-captured payloads from here; never hand-fabricated.
 FLIGHT_CASSETTE_DIR = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "recorded" / "flights"
-ACTIVITY_CASSETTE_PATH = (
-    Path(__file__).resolve().parent.parent
-    / "tests"
-    / "fixtures"
-    / "recorded"
-    / "activities"
-    / "san_diego.json"
-)
 
 # Agent guardrails: MAX_TOOL_STEPS/MAX_REQUESTS_PER_RUN bound the ReAct loop's iteration count.
 # MAX_CONTEXT_TOKENS matches gpt-oss-120b's real 30_000 tokens/minute limit on Cerebras — don't
@@ -117,9 +109,7 @@ class Settings(BaseSettings):
 
     use_live_flight_api: bool = True
     frontend_origin: str = "http://localhost:5173"
-    # Zero-trust enforcement is the default posture — "never trust, always verify" is not a
-    # toggle. Set ZERO_TRUST_ENFORCED=false only for the legacy trip/booking tests that predate
-    # the auth boundary and exercise route behavior, not identity.
+    # Retained so old deployments fail startup instead of silently accepting an unsafe setting.
     zero_trust_enforced: bool = True
     # No explicit secret -> a fresh per-process key, so an out-of-the-box run is enforced AND
     # unforgeable (nothing in the repo can sign a valid token). A real deployment sets an explicit
@@ -144,6 +134,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _reject_weak_signing_secret(self) -> "Settings":
+        if not self.zero_trust_enforced:
+            raise ValueError("Security enforcement cannot be disabled")
         signing_secret = self.zero_trust_signing_secret.get_secret_value()
         if self.zero_trust_enforced and len(signing_secret.encode()) < 32:
             raise ValueError(

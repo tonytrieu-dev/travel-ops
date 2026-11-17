@@ -29,7 +29,7 @@ _ROLE_ACTIONS = {
     },
     "trip-planner": {
         "trip.read", "trip.create", "trip.update", "trip.plan", "trip.execution.read",
-        "flight.search", "booking.read",
+        "flight.search", "booking.read", "execution.history.read", "booking.history.read",
     },
     "platform-operator": {"security.read"},
     "security-operator": {"security.read", "connector.configure"},
@@ -37,9 +37,9 @@ _ROLE_ACTIONS = {
         "trip.read", "trip.create", "trip.update", "trip.plan", "trip.execution.read",
         "flight.search", "booking.read", "booking.request", "booking.approve",
         "booking.cancel", "booking.execute", "security.read", "connector.configure",
+        "execution.history.read", "booking.history.read",
     },
 }
-_ALLOW_REASONS = {"allowed by role policy", "development security enforcement disabled"}
 
 
 class SecurityError(Exception):
@@ -49,16 +49,16 @@ class SecurityError(Exception):
         super().__init__(detail)
 
 
-def _authorization_reason(
+def _authorization_denial(
     context: SecurityContext, action: str, require_mfa: bool
-) -> str:
+) -> str | None:
     if not posture.enforcement_active():
-        return "development security enforcement disabled"
+        return None
     if action not in _ROLE_ACTIONS.get(context.role, set()):
         return "role is not allowed to perform action"
     if require_mfa and not context.mfa_verified:
         return "MFA required for privileged action"
-    return "allowed by role policy"
+    return None
 
 
 async def authorize(
@@ -70,14 +70,38 @@ async def authorize(
     request: Request | None = None,
     require_mfa: bool = False,
 ) -> None:
-    reason = _authorization_reason(context, action, require_mfa)
-    decision = "allow" if reason in _ALLOW_REASONS else "deny"
-    await record_security_event(
-        session, context, action=action, resource=resource, decision=decision,
-        reason=reason, request=request, mfa_required=require_mfa,
+    await _enforce_decision(
+        session, context, action=action, resource=resource, request=request,
+        require_mfa=require_mfa,
+        denial_reason=_authorization_denial(context, action, require_mfa),
     )
-    if decision == "deny":
-        raise SecurityError(reason)
+
+
+async def _enforce_decision(
+    session: AsyncSession,
+    context: SecurityContext,
+    *,
+    action: str,
+    resource: str,
+    request: Request | None,
+    require_mfa: bool,
+    denial_reason: str | None,
+    not_found: Exception | None = None,
+) -> None:
+    await record_security_event(
+        session, context, action=action, resource=resource,
+        decision="deny" if denial_reason is not None else "allow",
+        reason=denial_reason or (
+            "allowed by role policy" if posture.enforcement_active()
+            else "development security enforcement disabled"
+        ),
+        request=request, mfa_required=require_mfa,
+    )
+    if denial_reason is None:
+        return
+    if not_found is not None:
+        raise not_found
+    raise SecurityError(denial_reason)
 
 
 async def _admit(
@@ -93,22 +117,15 @@ async def _admit(
     not_found: Exception,
 ) -> None:
     if not exists:
-        reason = "resource does not exist or is not visible"
+        denial_reason = "resource does not exist or is not visible"
     elif posture.enforcement_active() and not owned:
-        reason = "tenant or owner mismatch"
+        denial_reason = "tenant or owner mismatch"
     else:
-        reason = _authorization_reason(context, action, require_mfa)
-    if reason not in _ALLOW_REASONS:
-        await record_security_event(
-            session, context, action=action, resource=resource, decision="deny", reason=reason, request=request,
-            mfa_required=require_mfa,
-        )
-        if not exists or not owned:
-            raise not_found
-        raise SecurityError(reason)
-    await record_security_event(
-        session, context, action=action, resource=resource, decision="allow", reason=reason, request=request,
-        mfa_required=require_mfa,
+        denial_reason = _authorization_denial(context, action, require_mfa)
+    await _enforce_decision(
+        session, context, action=action, resource=resource, request=request,
+        require_mfa=require_mfa, denial_reason=denial_reason,
+        not_found=not_found if not exists or not owned else None,
     )
 
 

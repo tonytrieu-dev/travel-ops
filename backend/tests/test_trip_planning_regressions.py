@@ -8,7 +8,7 @@ from sqlalchemy import select, text
 
 import pytest
 
-from app.models import FlightSearchResult, Itinerary, TripRequest
+from app.models import FitnessLevel, FlightSearchResult, Itinerary, TripRequest
 from tests.db_helpers import run_db, seed_flight_search_results, seed_itinerary
 
 
@@ -79,7 +79,7 @@ def test_concurrent_http_planning_invokes_planner_once(client, planner_spy, monk
         assert await asyncio.to_thread(release.wait, 10), 'planner was never released'
         return planner_spy.output
 
-    monkeypatch.setattr('app.dbos_runtime._run_planner_agent', slow_planner)
+    monkeypatch.setattr('app.agent.execution.run_planner', slow_planner)
     with ThreadPoolExecutor(max_workers=2) as pool:
         first = pool.submit(client.post, f'/api/trips/{trip_id}/plan')
         try:
@@ -106,18 +106,22 @@ def test_edit_during_planning_discards_obsolete_itinerary(client, planner_spy, m
     trip_id = create_trip(client)
     started = Event()
     release = Event()
+    captured_fitness_levels = []
 
     async def slow_planner(*arguments):
+        captured_fitness_levels.append(arguments[3])
         started.set()
         assert await asyncio.to_thread(release.wait, 10), 'planner was never released'
         return planner_spy.output
 
-    monkeypatch.setattr('app.dbos_runtime._run_planner_agent', slow_planner)
+    monkeypatch.setattr('app.agent.execution.run_planner', slow_planner)
     with ThreadPoolExecutor(max_workers=1) as pool:
         planning = pool.submit(client.post, f'/api/trips/{trip_id}/plan')
         try:
             assert started.wait(10), 'planner never started'
-            edited = client.patch(f'/api/trips/{trip_id}', json={'destination': 'London'})
+            edited = client.patch(
+                f'/api/trips/{trip_id}', json={'destination': 'London', 'fitness_level': 'low'}
+            )
             assert edited.status_code == 200, edited.text
         finally:
             release.set()
@@ -126,12 +130,13 @@ def test_edit_during_planning_discards_obsolete_itinerary(client, planner_spy, m
     snapshot = client.get(f'/api/trips/{trip_id}/snapshot').json()
     assert snapshot['trip']['destination'] == 'London'
     assert snapshot['plan'] is None
+    assert captured_fitness_levels == [FitnessLevel.HIGH]
 
 
 def test_durable_workflow_persists_without_the_http_caller(client, planner_spy) -> None:
     from dbos import SetWorkflowID
 
-    from app.dbos_runtime import _run_planner_workflow
+    from app.dbos_runtime import run_planner_durable
     from app.repositories.trips_repository import _build_planner_prompt, get_trip
 
     trip_id = create_trip(client)
@@ -140,7 +145,7 @@ def test_durable_workflow_persists_without_the_http_caller(client, planner_spy) 
     workflow_id = str(uuid4())
     async def run_workflow():
         with SetWorkflowID(workflow_id):
-            await _run_planner_workflow(trip_id, prompt, "persistence-regression")
+            await run_planner_durable(trip_id, prompt, trip.fitness_level, "persistence-regression")
 
     assert client.portal is not None
     client.portal.call(run_workflow)

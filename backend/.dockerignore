@@ -1,5 +1,12 @@
-.venv
 .env
-__pycache__
+.env.*
+!.env.example
+.venv*
+**/__pycache__
 .pytest_cache
+.pyrefly
+.dbos
+.baml
 baml_sdk
+.agents
+.claude

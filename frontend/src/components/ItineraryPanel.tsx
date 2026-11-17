@@ -17,7 +17,7 @@ interface ItineraryPanelProps {
 }
 
 // Age, fitness level, and dates are mandatory at trip intake (see AGENTS.md), so they can never
-// be the reason the planner asks a clarifying question — only a genuinely ambiguous origin,
+// be the reason the planner asks a clarifying question. Only a genuinely ambiguous origin,
 // destination, or destination_airport can (e.g. "Paris" meaning France or Texas). This form's
 // fields match that real trigger surface, pre-filled with the trip's current values.
 function ClarificationForm({

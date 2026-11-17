@@ -18,7 +18,7 @@ flowchart LR
     DBOS -.->|execute_booking_durable wraps| Repo
     DBOS --> DB
     API -->|/api/connectors| ConnSetting[(connector_setting)]
-    API -->|development only; enforcement off| Slack[(Legacy Slack)]
+    API -.->|legacy test harness only| Slack[(Legacy Slack)]
     Slack -->|signed callback; enforcement off| API
 ```
 
@@ -75,7 +75,7 @@ and independent security assessment remain outside its scope.
 Zero-trust verification happens at two places: the HTTP edge (every protected route) and the
 booking state machine (every transition). It does **not** continue inside the planner's tool loop.
 When a `/plan` request is admitted, it crosses into the durable workflow as three serializable
-values — `trip_id`, `prompt`, `trace_id` — and the verified `SecurityContext` is left at the edge.
+values; `trip_id`, `prompt`, `trace_id`; and the verified `SecurityContext` is left at the edge.
 `PlannerDeps` carries the flight and activity providers and the traveler's fitness level, not an
 identity. So the model's tool calls run with the harness's ambient authority, not the caller's:
 there is no per-tool-call re-authorization, and no tenant/role check inside the loop.
@@ -84,15 +84,15 @@ That is a deliberate posture, not an oversight. The loop is safe because the age
 powerless, not because it is continuously verified. Two design choices hold that line: the agent
 has only read-only tools (`search_flights`, `web_search`, both reaching external providers with
 the trip's own parameters), and the one operation that mutates state and crosses an identity
-boundary — booking — is not an agent tool at all. It lives behind the REST state machine, where
+boundary; booking; is not an agent tool at all. It lives behind the REST state machine, where
 each transition is re-verified by `admit_booking_route(..., require_mfa=True)`. The dangerous
 capability sits outside the loop, so the loop has nothing worth attacking.
 
 The consequence is explicit: the agent loop is a least-privilege sandbox bounded by *capability*,
 not a continuously-verified zero-trust zone. This equivalence depends on the tool set staying
 read-only. The day the agent gains a tool that writes state or reads another tenant's data, the
-boundary has to move inward — the `SecurityContext` must be threaded into `PlannerDeps` and each
-tool call re-authorized against the caller — or that tool must stay outside the loop behind its
+boundary has to move inward; the `SecurityContext` must be threaded into `PlannerDeps` and each
+tool call re-authorized against the caller; or that tool must stay outside the loop behind its
 own admission check, the way booking does. Adding per-tool-call authorization today, for two
 read-only tools, would guard a blast radius that does not exist.
 
@@ -148,9 +148,9 @@ tool-calling loop, and separate browser interface. See "Why this stack, as a who
 
 ## Capabilities → implementation
 
-- **Cheapest flights:** `FlightSearchService` (`app/services/flight_search.py`) — the one
+- **Cheapest flights:** `FlightSearchService` (`app/services/flight_search.py`); the one
   implementation behind both `POST /api/trips/{trip_id}/flights/search` and the planner's
-  `search_flights` tool —
+  `search_flights` tool -
   sorts every offer ascending by `price_usd` via `trips_repository.py::cheapest_first` (shared,
   not duplicated) on every path: fresh search, own-trip TTL reuse, cross-trip cache. A backend
   invariant rather than relying only on provider ordering; the UI renders offers in the returned
@@ -158,7 +158,7 @@ tool-calling loop, and separate browser interface. See "Why this stack, as a who
   persists and reaches across trips, the planner tool trusts only this trip's own recent search
   and never writes offers (see "The agent has only two read-only tools" in `DECISIONS.md`).
   `POST /api/trips/{trip_id}/flights/search` is reachable on its own, independent of
-  `POST /api/trips/{trip_id}/plan` — see "Flight search is its own user-facing capability" in
+  `POST /api/trips/{trip_id}/plan`; see "Flight search is its own user-facing capability" in
   `DECISIONS.md` for why.
 - **Attributed itinerary, tailored to age/fitness:** `web_search` (Tavily) supplies activity
   research; `output_type=[ToolOutput(ItineraryOut),
@@ -170,12 +170,12 @@ tool-calling loop, and separate browser interface. See "Why this stack, as a who
   `reject_optional_clarification` blocks a clarifying question that re-asks for age/fitness once
   they're already present, and `reject_flight_activities` rejects flight-shaped items masquerading
   as itinerary activities.
-- **Ask, don't assume:** genuinely ambiguous inputs (not missing ones — those are required at
+- **Ask, don't assume:** genuinely ambiguous inputs (not missing ones; those are required at
   intake) produce a `ClarificationOut` instead of a guessed itinerary.
 - **Visible UI:** React SPA with a live tool-call feed and an execution panel (see below).
 - **HITL booking:** explicit confirm-then-execute clicks gate the booking handoff;
   see "HITL booking" below for what "execute" does and doesn't do.
-- **Legacy Slack HITL connector:** with enforcement disabled for local development, an optional,
+- **Legacy Slack HITL connector:** in the legacy test harness, an optional,
   DB-toggled Slack message offers the same state-machine transition through Confirm/Reject
   buttons; see "Slack HITL connector" below.
 
@@ -184,27 +184,27 @@ tool-calling loop, and separate browser interface. See "Why this stack, as a who
 Five patterns are used explicitly. This section maps each pattern to the code;
 [DECISIONS.md](DECISIONS.md) records the trade-offs.
 
-1. **Dependency Injection** (FastAPI `Depends`) — DB sessions (`get_session`) and external clients
+1. **Dependency Injection** (FastAPI `Depends`); DB sessions (`get_session`) and external clients
    (flight provider, booking-options fetcher) are injected into route handlers, never constructed
    inside them. `agent/planner.py`'s `PlannerDeps` extends the same idea into the agent: the
    planner takes its `FlightProvider`/`ActivityProvider` as constructor args, so a test can hand it
    a fake without touching the model call.
-2. **Finite State Machine** (`app/state.py`) — `ALLOWED_TRANSITIONS` is the single source of truth
+2. **Finite State Machine** (`app/state.py`); `ALLOWED_TRANSITIONS` is the single source of truth
    for booking state (`PENDING → CONFIRMED → EXECUTED`, +`CANCELLED`/`EXPIRED`); every transition
    is a guard clause (illegal move → 409) plus an append-only audit row in the same transaction.
    See "HITL booking" below and "HITL booking is a REST state machine, not an agent tool" in
    DECISIONS.md.
-3. **Repository pattern** (`app/repositories/*`) — all Postgres access lives behind
+3. **Repository pattern** (`app/repositories/*`); all Postgres access lives behind
    `trips_repository.py`/`booking_repository.py`; route handlers call the repository and shape a
    response, never build a query or own a transaction boundary themselves.
-4. **Strategy pattern** (`FlightProvider` in `app/adapters/flights_searchapi.py`) — one `Protocol`,
+4. **Strategy pattern** (`FlightProvider` in `app/adapters/flights_searchapi.py`); one `Protocol`,
    two interchangeable implementations (`LiveSearchApiProvider`, `RecordedProvider`) selected once
    at composition by `USE_LIVE_FLIGHT_API`. `FlightSearchService`, the route, and the planner tool
    all depend on the interface via DI and never branch on the toggle themselves.
-5. **Durable execution, not Saga** (DBOS) — `execute_booking_durable` and the planner run are
+5. **Durable execution, not Saga** (DBOS); `execute_booking_durable` and the planner run are
    `@DBOS.workflow`s to checkpoint supported workflow steps for crash recovery. A
    single-DB booking write is already atomic (one ACID transaction + `SELECT ... FOR UPDATE`), so
-   this is durable-execution for crash recovery, not classic Saga compensation — compensation
+   this is durable-execution for crash recovery, not classic Saga compensation; compensation
    (release a hold, refund a charge) would only apply to a real multi-step airline booking, which
    this application does not perform. `execute_booking` separates the external fetch from the
    state transition, leaving a clear extension point if the workflow grows.
@@ -218,7 +218,7 @@ search behavior shared by the route and planner tool.
 
 | API | Role | Adapter |
 |---|---|---|
-| Cerebras (`gpt-oss-120b`) | The planner LLM — reasoning, tool selection, structured output. | Pydantic AI `CerebrasModel`/`CerebrasProvider` in `planner.py`. |
+| Cerebras (`gpt-oss-120b`) | The planner LLM; reasoning, tool selection, structured output. | Pydantic AI `CerebrasModel`/`CerebrasProvider` in `planner.py`. |
 | SearchApi.io Google Flights | Flight offers and booking-option links in live mode. | `flights_searchapi.py` (Live vs Recorded strategy). |
 | Tavily | Activity-search results with source URLs. | `activities_tavily.py`. |
 | Slack (development only) | Legacy approval message and signed callback, unavailable under enforcement. | `slack_hitl.py` + `routes/slack.py`. |
@@ -226,31 +226,31 @@ search behavior shared by the route and planner tool.
 **AI protocols:**
 
 - **REST** between the React frontend and FastAPI backend.
-- **LLM tool/function calling** — the model chooses when to call `search_flights` and
+- **LLM tool/function calling**; the model chooses when to call `search_flights` and
   `web_search`; results feed back into its context.
-- **JSON Schema structured output** — Pydantic AI validates the model's output against
+- **JSON Schema structured output**; Pydantic AI validates the model's output against
   `output_type=[ItineraryOut, ClarificationOut]`; "ask, don't assume" is a type, not a hope.
-- **ReAct-style agent loop** — `agent.iter(...)` drives a reason → act (tool call) → observe
+- **ReAct-style agent loop**; `agent.iter(...)` drives a reason → act (tool call) → observe
   cycle until the model resolves to a final structured output.
 
 **Supporting engineering (not protocols, but load-bearing):**
 
-- **Usage limits** — `UsageLimits(tool_calls_limit=MAX_TOOL_STEPS,
+- **Usage limits**; `UsageLimits(tool_calls_limit=MAX_TOOL_STEPS,
   total_tokens_limit=MAX_CONTEXT_TOKENS, request_limit=MAX_REQUESTS_PER_RUN)` bounds each loop.
   `UsageLimitExceeded` is mapped to `PlanTooComplexOut` ("too complex for one pass"). Other
   provider and application failures are not covered by that fallback.
-- **Rate limiting** — a verified-device request cap with a client-IP fallback
+- **Rate limiting**; a verified-device request cap with a client-IP fallback
   (`RATE_LIMIT_MAX_REQUESTS=10`/`RATE_LIMIT_WINDOW_SECONDS=60` in `app/rate_limit.py`)
   gates the planning and flight-search
   routes, `POST /api/trips/{trip_id}/plan` and `POST /api/trips/{trip_id}/flights/search`, separate
   from the `MAX_CONCURRENT_AGENT_RUNS` concurrency slot above: the concurrency slot caps
   simultaneous LLM calls, while this caps request *volume* as observed by one process. The limiter
   is in memory, resets on restart, and has not been verified behind a hosted reverse proxy.
-- **Prompt-injection mitigation** — `sanitize_web_content` truncates and delimits Tavily text before
+- **Prompt-injection mitigation**; `sanitize_web_content` truncates and delimits Tavily text before
   it reaches the model. This reduces direct instruction mixing but is not a security boundary.
-- **Durable steps (DBOS)** — the planner run and booking execute are checkpointed workflows that
+- **Durable steps (DBOS)**; the planner run and booking execute are checkpointed workflows that
   resume after a crash.
-- **Observability** — `AgentRun`/`AgentRunStep` rows are derived from the real message history and
+- **Observability**; `AgentRun`/`AgentRunStep` rows are derived from the real message history and
   usage, powering the execution panel.
 
 ## Request/agent flow
@@ -262,8 +262,8 @@ search behavior shared by the route and planner tool.
 planner: `execution_context(...)` binds an `AgentRun` for the trip, then
 `agent.iter(...)` drives a ReAct-style loop over `search_flights`/`web_search`, capped by
 `MAX_TOOL_STEPS`/`MAX_CONTEXT_TOKENS`. The agent's own structured output is `ItineraryOut |
-ClarificationOut` — a `ClarificationOut` returns questions without persisting an itinerary; an
-`ItineraryOut` persists and moves the trip to `ITINERARY_READY`. One level up, `dbos_runtime.py`
+ClarificationOut`; a `ClarificationOut` returns questions without persisting an itinerary; an
+`ItineraryOut` persists and moves the trip to `ITINERARY_READY`. The execution module (`app/agent/execution.py`)
 catches `UsageLimitExceeded` around that call and turns it into a `PlanTooComplexOut` instead of
   letting the crash propagate, so what `run_planner_durable`/`POST /api/trips/{trip_id}/plan` actually
   return is the wider
@@ -273,7 +273,7 @@ through the bound context. The execution-recording module owns run creation and 
 `finish_planner_run` derives steps from captured message history and records usage on both
 success and handled failure paths. Flight search uses the same `finish_run` implementation for
 status, timing, and step persistence. The concurrency slot releases in a `finally`, outside
-the DBOS-wrapped call — see [DECISIONS.md](DECISIONS.md) for why that placement matters.
+the DBOS-wrapped call; see [DECISIONS.md](DECISIONS.md) for why that placement matters.
 `POST /api/trips/{trip_id}/flights/search` (outside the agent loop) still binds its own run through
 the lower-level `execution_context()` directly, since it isn't wrapped in a DBOS workflow.
 
@@ -284,21 +284,23 @@ the lower-level `execution_context()` directly, since it isn't wrapped in a DBOS
 `AgentRunStep`s and `ExecutionEvent`s, shaped into `ExecutionPanelOut` with derived context usage
 and estimated cost. The response also retains the trip-wide event stream for LiveActivity; the
 execution panel renders events only inside their owning run. `GET /api/execution` is the same
-shape across every trip the user owns (`GlobalExecutionPanelOut`) — it backs the "Agent execution
+shape for a bounded page across the user's trips (`GlobalExecutionPanelOut`, default 20, maximum 100 runs, with a `next_before_run_id` cursor); it backs the "Agent execution
 history" tab, which is global rather than scoped to whichever trip is currently active (see
-"Trip history is a list endpoint plus a global execution feed" in `DECISIONS.md`). The tab filters
-that list client-side by route text and run status; `GET /api/trips` (also newest-first,
+"Trip history is a list endpoint plus a global execution feed" in `DECISIONS.md`). The tab pages by descending run ID and filters
+the current page client-side by route text and run status; `GET /api/trips` (also newest-first,
 user-scoped) backs the sibling "Your trips" tab, filtered client-side by a date-range dropdown.
 
 ## Data model
 
 Five core tables (`user_account`, `trip_request`, `flight_search_result`, `itinerary`,
-`hitl_booking_log`), one connector-config table (`connector_setting` — a single-row, DB-backed
-toggle for the legacy development-only Slack connector), and four
-audit/observability tables (`booking_transition`, `execution_event`, `agent_run`, `agent_run_step`)
-in `app/models.py`. `booking_transition` and `execution_event` are append-only, enforced by a
-Postgres trigger (`reject_audit_row_mutation()`) — `UPDATE`/`DELETE` raises at the database level
-regardless of what application code attempts. Deliberately relational, not a document store — see
+`hitl_booking_log`), one connector-config table (`connector_setting`; a single-row, DB-backed
+toggle for the legacy development-only Slack connector), four execution tables
+(`execution_event`, `agent_run`, `agent_run_step`, `booking_transition`), and four security-evidence
+tables (`security_session`, `security_event`, `security_incident`, `compliance_assessment`) live in
+`app/models.py`. The execution and security-evidence tables are append-only where their records
+are evidence; Postgres triggers (`reject_audit_row_mutation()`) reject `UPDATE`/`DELETE` and
+`TRUNCATE` on those tables at the database level regardless of what application code attempts.
+The model remains deliberately relational, not a document store; see
 "PostgreSQL over a NoSQL store" in [DECISIONS.md](DECISIONS.md).
 
 ## HITL booking (`app/state.py`)
@@ -313,7 +315,7 @@ can plan and search but has no tool that can move a booking's state, so "a human
 confirm, then execute" is structural, not a prompt instruction the model could be talked out of.
 
 **Scope note:** "execute" fetches real booking options from SearchApi and stamps an internal
-`TA-*` reference on the `HITLBookingLog` row — it's a human-confirmed booking *handoff*, not a
+`TA-*` reference on the `HITLBookingLog` row; it's a human-confirmed booking *handoff*, not a
 real airline reservation/purchase (no PNR, no payment). Those options render as per-provider
 checkout buttons the traveler clicks through to complete the purchase on the carrier's own site,
 so no fare is held by this application; `BOOKING_TTL_MINUTES` is an internal price-freshness window, checked
@@ -322,22 +324,22 @@ for this project; see [DECISIONS.md](DECISIONS.md).
 
 ## Slack HITL connector (`app/adapters/slack_hitl.py`, `app/routes/slack.py`, `app/routes/connectors.py`)
 
-Legacy development path, off by default and unavailable whenever `ZERO_TRUST_ENFORCED=true`.
-With enforcement disabled, `GET /api/connectors` reads and `PATCH /api/connectors/slack` flips the
+Legacy test-harness path. Runtime settings reject disabled enforcement, so this connector is unavailable in deployments.
+In the legacy test harness, `GET /api/connectors` reads and `PATCH /api/connectors/slack` flips the
 single-row `connector_setting.slack_enabled` toggle. Enabling it also requires
 `SLACK_BOT_TOKEN`/`SLACK_SIGNING_SECRET`/`SLACK_APPROVALS_CHANNEL_ID` (409 otherwise). Connector
 settings are deployment-wide rather than tenant-owned. Under enforcement, both endpoints still
 require the `security-operator` or `admin` role and verified MFA, but the connector remains
 unavailable. The frontend's Connectors tab (`ConnectorsPanel.tsx`) drives this toggle.
 
-In development mode, an enabled connector makes `request_booking` (`routes/booking.py`) post a
+In the legacy test harness, an enabled connector makes `request_booking` (`routes/booking.py`) post a
 Confirm/Reject Block Kit message via `notify_pending_approval`. Slack's callback hits
 `POST /api/slack/interactions`, verifies the request signature (stdlib `hmac`, constant-time
 compare), then resolves to the same `confirm_booking`/`reject_booking` repository calls as the
 in-app buttons. Under enforcement, the shared availability check rejects the callback and prevents
 notifications and enablement because Slack users are not mapped to application sessions, owners,
-roles, or MFA. See [SLACK_SETUP.md](SLACK_SETUP.md) for local setup and
-[DECISIONS.md](DECISIONS.md) for the adapter decision.
+roles, or MFA. See [DECISIONS.md](DECISIONS.md#custom-slack-hitl-adapter-over-chat-sdk-python)
+for the historical adapter decision. There is no supported runtime Slack setup.
 
 ## Agent Execution Panel
 
@@ -350,7 +352,7 @@ attribution is easier to query separately than if it were folded into the agent'
 
 Watch the agent work, live or after the fact: each run card combines metrics, model calls, tool
 calls, the structured output, and its own API/protocol activity. The output is its own
-`AgentStepKind.OUTPUT` rather than a tool call — pydantic-ai delivers a result by calling a
+`AgentStepKind.OUTPUT` rather than a tool call; pydantic-ai delivers a result by calling a
 synthetic `final_result_<Type>` tool, so grouping it with `search_flights`/`web_search` made the
 itinerary look like an agent tool invocation. A refused attempt is recorded `rejected`, which is
 what a retry-exhausted run looks like. Backed by persisted
@@ -362,17 +364,32 @@ complete distributed-observability system.
 
 Two flows are wrapped as `@DBOS.workflow`s to support checkpointed crash recovery:
 `execute_booking_durable` (`app/dbos_runtime.py`) and the planner run
-(`_run_planner_workflow`). DBOS reuses the app's own Postgres instance (its own `dbos` schema) —
+(`_run_planner_workflow`). DBOS reuses the app's own Postgres instance (its own `dbos` schema) -
 no additional infrastructure. Because DBOS workflows must take only serializable arguments and
 may replay their body during crash recovery, both durable entry points rebuild their
 session/provider dependencies internally rather than receiving them injected, and neither
-mutates plain in-process state (locks, counters) from inside the workflow body — see
+mutates plain in-process state (locks, counters) from inside the workflow body; see
 [DECISIONS.md](DECISIONS.md) for the concurrency-limiter bug this constraint caused and how it
 was fixed.
 
 Within the planner run, the three calls that spend real external quota are each wrapped in their
-own `@DBOS.step` — the Cerebras completion (`agent.model.request`), the flight search
-(`FlightProvider.search_offers`), and the activity search (`ActivityProvider.search`) — so a
+own `@DBOS.step`; the Cerebras completion (`agent.model.request`), the flight search
+(`FlightProvider.search_offers`), and the activity search (`ActivityProvider.search`); so a
 crash-recovery replay reuses each call's recorded result instead of re-issuing it. See
 [DECISIONS.md](DECISIONS.md) for why these are wrapped as free functions rather than decorating
 the bound methods directly.
+
+## Ownership of execution and admission
+
+`app/agent/execution.py` owns planner dependencies, iteration and recording finalization.
+`dbos_runtime.py` owns durable adapter registration, provider reconstruction and persistence;
+concurrency remains outside replayable work. Tests replace the public planner execution seam
+or opt into the real planner with the `real_planner` marker, rather than capturing private functions.
+
+Security admission derives one outcome and uses it for both persisted evidence and the raised
+error; role policy no longer interprets reason wording as a permission. Existing route adapters,
+independent authentication-failure transactions and denial containment remain in place.
+
+Frontend `useRequestLifetime` owns session and selection validity checks shared by trip actions
+and polling. Polling still owns cadence, overlap prevention and queued refreshes. The transport
+ignores an obsolete request's 401 when a replacement session has already signed in.

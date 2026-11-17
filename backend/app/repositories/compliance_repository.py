@@ -10,6 +10,7 @@ from app.compliance import evaluate_audit_protections, evaluate_containment, eva
 from app.models import ComplianceAssessment, SecurityEvent, User, utcnow
 
 EVALUATOR_VERSION = "3"
+MAX_EVENTS_PER_TENANT = 100_000
 
 
 async def assess_security_controls(session: AsyncSession) -> int:
@@ -43,11 +44,18 @@ async def assess_security_controls(session: AsyncSession) -> int:
     tenants = list(await session.scalars(select(col(User.tenant_id)).distinct()))
     # shortcut: full-window reads fit the local demo; use durable ingestion when volume outgrows memory.
     for tenant_id in tenants:
-        events = list(await session.scalars(select(SecurityEvent).where(
-            col(SecurityEvent.tenant_id) == tenant_id,
-            col(SecurityEvent.created_at) >= window_start - timedelta(minutes=5),
-            col(SecurityEvent.created_at) <= window_end,
-        )))
+        events = list(await session.scalars(
+            select(SecurityEvent)
+            .where(
+                col(SecurityEvent.tenant_id) == tenant_id,
+                col(SecurityEvent.created_at) >= window_start - timedelta(minutes=5),
+                col(SecurityEvent.created_at) <= window_end,
+            )
+            .order_by(col(SecurityEvent.created_at).desc(), col(SecurityEvent.id).desc())
+            .limit(MAX_EVENTS_PER_TENANT + 1)
+        ))
+        evidence_truncated = len(events) > MAX_EVENTS_PER_TENANT
+        events = list(reversed(events[:MAX_EVENTS_PER_TENANT]))
         session_ids = {event.session_id for event in events if event.session_id}
         successes = list(await session.scalars(select(SecurityEvent).where(
             col(SecurityEvent.tenant_id) == tenant_id,
@@ -60,6 +68,16 @@ async def assess_security_controls(session: AsyncSession) -> int:
             evaluate_audit_protections(protections),
             evaluate_containment(events, window_end, window_start),
         ]
+        if evidence_truncated:
+            results = [
+                result.model_copy(update={
+                    "status": "insufficient_evidence"
+                    if result.status == "pass" else result.status,
+                    "summary": f"Evidence capped at {MAX_EVENTS_PER_TENANT} events; {result.summary}",
+                    "details": {**result.details, "evidence_truncated": True},
+                })
+                for result in results
+            ]
         session.add(ComplianceAssessment(
             tenant_id=tenant_id, evaluator_version=EVALUATOR_VERSION,
             window_start=window_start, window_end=window_end,

@@ -38,6 +38,7 @@ _OPTIONAL_CLARIFICATION_PATTERN = re.compile(
     r"\b(?:budget|interests?|preferences?|prefer|age|fitness|dates?|depart|return|origin|airport)\b",
     re.IGNORECASE,
 )
+MAX_WEB_SEARCH_CALLS = 3
 
 
 @dataclass
@@ -45,15 +46,13 @@ class PlannerDeps:
     flight_provider: FlightProvider
     activity_provider: ActivityProvider
     fitness_level: FitnessLevel | None = None
-    # Per-run guards, not a cache: one search_flights response already covers both legs.
     _search_flights_called: bool = False
-    _web_search_called: bool = False
+    _web_search_calls: int = 0
 
 
 def _activity_provider_name(provider: ActivityProvider) -> str:
     return {
         "TavilyActivityProvider": "Tavily",
-        "RecordedActivityProvider": "Recorded activities",
     }.get(type(provider).__name__, type(provider).__name__)
 
 
@@ -72,9 +71,7 @@ async def search_flights(
     outbound_date: str,
     return_date: str | None = None,
 ) -> dict:
-    """Search real Google Flights offers between two IATA airport codes. When return_date is
-    set, the single response already contains both the outbound and return legs — call this at
-    most once per trip; never call it again to search the return leg separately."""
+    """Search real Google Flights offers for the authorized trip's route and dates."""
     if ctx.deps._search_flights_called:
         raise ModelRetry(
             "search_flights already ran for this trip earlier in this conversation and its "
@@ -94,6 +91,13 @@ async def search_flights(
     trip = await session.get(TripRequest, trip_id)
     if trip is None:
         raise ModelRetry(f"trip {trip_id} is gone; cannot search flights for it")
+    if (departure_id, arrival_id, outbound_date, return_date) != (
+        trip.origin, trip.destination_airport, trip.depart_date, trip.return_date
+    ):
+        raise ModelRetry(
+            "The requested flight route or dates do not match the authorized trip. "
+            "Use the trip's origin, destination airport, and dates."
+        )
     outcome = await FlightSearchService(session, ctx.deps.flight_provider).search(
         trip_id, persist=False, allow_cross_trip_cache=False
     )
@@ -108,12 +112,11 @@ async def search_flights(
 async def web_search(
     ctx: RunContext[PlannerDeps], query: str, max_results: int = MAX_WEB_SEARCH_RESULTS
 ) -> list[dict]:
-    """Research real, source-attributed activities or information. Call this at most once per
-    trip with one broad query (e.g. "things to do in {destination}") — never call it again."""
-    if ctx.deps._web_search_called:
+    """Research source-attributed information within the authorized trip's destination."""
+    if ctx.deps._web_search_calls >= MAX_WEB_SEARCH_CALLS:
         raise ModelRetry(
-            "web_search already ran for this trip earlier in this conversation. Reuse that "
-            "result; do not call web_search again."
+            f"web_search reached its limit of {MAX_WEB_SEARCH_CALLS} searches for this trip. "
+            "Reuse the research already returned."
         )
     started_at = time.monotonic()
     # Clamp both ends: the ceiling protects the provider token budget, and the floor of 1 keeps a
@@ -123,6 +126,7 @@ async def web_search(
     trip = await session.get(TripRequest, trip_id)
     if trip is None:
         raise ModelRetry(f"trip {trip_id} is gone; cannot search activities for it")
+    ctx.deps._web_search_calls += 1
     # A free-text destination (e.g. "Ontario") can collide with a same-named place elsewhere;
     # anchor on the unambiguous airport code so results can't silently drift to the wrong place.
     anchored_query = f"{query} near {trip.destination_airport} airport"
@@ -139,7 +143,6 @@ async def web_search(
         data={"results": [{"title": result.title, "url": result.url} for result in results]},
         provider=_activity_provider_name(ctx.deps.activity_provider),
     )
-    ctx.deps._web_search_called = True
     return [
         {
             "title": result.title,

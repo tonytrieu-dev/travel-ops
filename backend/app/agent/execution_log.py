@@ -41,14 +41,12 @@ async def execution_context(
 ) -> AsyncIterator[AgentRun | None]:
     """Bind one execution so its append-only events retain both trip and run ownership."""
     with bind_correlation_id(correlation or correlation_id()):
-        agent_run = (
-            AgentRun(trip_request_id=trip_request_id, status="running", model=run_model)
-            if run_model is not None
-            else None
-        )
-        if agent_run is not None:
+        agent_run = None
+        if run_model is not None:
+            agent_run = AgentRun(trip_request_id=trip_request_id, status="running", model=run_model)
             session.add(agent_run)
             await session.commit()
+        if agent_run is not None:
             assert agent_run.id is not None
 
         token = _current.set(

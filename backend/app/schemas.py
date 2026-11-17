@@ -346,9 +346,9 @@ class ExecutionPanelOut(BaseModel):
 
 
 class GlobalExecutionPanelOut(BaseModel):
-    """Every agent run across every trip the user owns — backs the execution history tab, which
-    is global rather than scoped to whichever trip is currently active."""
+    """One page of agent runs across the current user's trips."""
 
+    next_before_run_id: int | None = None
     agent_runs: list[AgentRunOut] = Field(default_factory=list)
 
 

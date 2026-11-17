@@ -88,9 +88,11 @@ class FlightSearchService:
         run_started_at = utcnow()
         run_started_monotonic = time.monotonic()
 
-        same_trip_cache = await self._get_same_trip_cache(trip)
-        if same_trip_cache and persist:
+        if persist:
+            # Serialize cache misses for one trip so concurrent requests cannot burn provider
+            # quota and persist multiple result batches for the same search.
             trip = await self._lock_unchanged_trip(trip_id, searched_criteria)
+        same_trip_cache = await self._get_same_trip_cache(trip)
         if same_trip_cache:
             await self._log(
                 trip, record_run, "ok",
@@ -99,30 +101,26 @@ class FlightSearchService:
             )
             return TripFlightSearchOutcome(same_trip_cache, None, "same_trip_cache")
         if allow_cross_trip_cache:
-            cross_trip_offers = await self._get_cross_trip_cache(trip)
-            if cross_trip_offers:
-                results = [
-                    FlightSearchResult(
-                        trip_request_id=trip_id, offer_index=source_offer.offer_index,
-                        carrier=source_offer.carrier, price_usd=source_offer.price_usd,
-                        currency=source_offer.currency, depart_at=source_offer.depart_at,
-                        arrive_at=source_offer.arrive_at, stops=source_offer.stops,
-                        booking_token=source_offer.booking_token, raw_offer=source_offer.raw_offer,
-                        source=FlightResultSource.CACHED,
-                        created_at=source_offer.created_at,
-                    )
-                    for source_offer in cross_trip_offers
-                ]
-                trip = await self._lock_unchanged_trip(trip_id, searched_criteria)
-                self._session.add_all(results)
-                trip.status = TripStatus.FLIGHTS_SEARCHED
-                await self._session.commit()
-                await self._log(
-                    trip, record_run, "ok",
-                    f"{len(results)} offers (cached from an identical route/date search)",
-                    results, run_started_at, run_started_monotonic,
-                )
-                return TripFlightSearchOutcome(cheapest_first(results), None, "cross_trip_cache")
+            cross_trip_outcome = await self._try_cross_trip_cache(
+                trip, trip_id, searched_criteria, record_run, run_started_at, run_started_monotonic
+            )
+            if cross_trip_outcome is not None:
+                return cross_trip_outcome
+        return await self._search_live(
+            trip, trip_id, searched_criteria, record_run, persist,
+            run_started_at, run_started_monotonic,
+        )
+
+    async def _search_live(
+        self,
+        trip: TripRequest,
+        trip_id: int,
+        searched_criteria: tuple[str, str, str, str | None],
+        record_run: bool,
+        persist: bool,
+        run_started_at: datetime,
+        run_started_monotonic: float,
+    ) -> TripFlightSearchOutcome:
         provider_started = time.monotonic()
         outcome = await self._provider.search_offers(
             trip.origin, trip.destination_airport, trip.depart_date, trip.return_date
@@ -138,7 +136,6 @@ class FlightSearchService:
             for index, offer in enumerate(outcome.offers)
         ]
         if persist:
-            trip = await self._lock_unchanged_trip(trip_id, searched_criteria)
             self._session.add_all(results)
             if results:
                 trip.status = TripStatus.FLIGHTS_SEARCHED
@@ -152,6 +149,42 @@ class FlightSearchService:
             provider_duration_ms,
         )
         return TripFlightSearchOutcome(cheapest_first(results), outcome.unavailable_reason, "live")
+
+    async def _try_cross_trip_cache(
+        self,
+        trip: TripRequest,
+        trip_id: int,
+        searched_criteria: tuple[str, str, str, str | None],
+        record_run: bool,
+        run_started_at: datetime,
+        run_started_monotonic: float,
+    ) -> "TripFlightSearchOutcome | None":
+        """Reuse an identical route/date search from another trip, if one exists in the cache."""
+        cross_trip_offers = await self._get_cross_trip_cache(trip)
+        if not cross_trip_offers:
+            return None
+        results = [
+            FlightSearchResult(
+                trip_request_id=trip_id, offer_index=source_offer.offer_index,
+                carrier=source_offer.carrier, price_usd=source_offer.price_usd,
+                currency=source_offer.currency, depart_at=source_offer.depart_at,
+                arrive_at=source_offer.arrive_at, stops=source_offer.stops,
+                booking_token=source_offer.booking_token, raw_offer=source_offer.raw_offer,
+                source=FlightResultSource.CACHED,
+                created_at=source_offer.created_at,
+            )
+            for source_offer in cross_trip_offers
+        ]
+        trip = await self._lock_unchanged_trip(trip_id, searched_criteria)
+        self._session.add_all(results)
+        trip.status = TripStatus.FLIGHTS_SEARCHED
+        await self._session.commit()
+        await self._log(
+            trip, record_run, "ok",
+            f"{len(results)} offers (cached from an identical route/date search)",
+            results, run_started_at, run_started_monotonic,
+        )
+        return TripFlightSearchOutcome(cheapest_first(results), None, "cross_trip_cache")
 
     async def _lock_unchanged_trip(
         self, trip_id: int, searched_criteria: tuple[str, str, str, str | None],

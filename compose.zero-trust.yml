@@ -22,7 +22,7 @@ services:
       TAVILY_API_KEY: provisioning
       DATABASE_URL: postgresql+asyncpg://travel_owner:${OWNER_DATABASE_PASSWORD:?required}@postgres/travel_agent
     volumes:
-      - ./.device-certificates:/provisioning
+      - ./.identity-provisioning:/provisioning
     command: [alembic, upgrade, head]
     networks: [database]
     depends_on:
@@ -51,6 +51,11 @@ services:
       ZERO_TRUST_ENFORCED: "true"
       DEVICE_GATEWAY_SECRET: ${DEVICE_GATEWAY_SECRET:?required}
     networks: [application, database, outbound]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/auth/config', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
     depends_on:
       grants:
         condition: service_completed_successfully
@@ -67,7 +72,14 @@ services:
       - ./.device-certificates/server.key:/certificates/server.key:ro
     ports: ["127.0.0.1:8443:443"]
     networks: [ingress, application]
-    depends_on: [api]
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, nc, -z, 127.0.0.1, "443"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 networks:
   ingress: {}
   application:

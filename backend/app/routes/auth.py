@@ -64,6 +64,6 @@ async def browser_verify_mfa(
 
 
 @router.get("/browser/session")
-async def browser_session(response: Response, context: SecurityContext = Depends(get_security_context)) -> dict[str, str | None]:
+async def browser_session(response: Response, context: SecurityContext = Depends(get_security_context)) -> dict[str, str | bool | None]:
     response.headers["Cache-Control"] = "no-store"
-    return {"session_id": context.session_id}
+    return {"session_id": context.session_id, "role": context.role, "mfa_verified": context.mfa_verified}

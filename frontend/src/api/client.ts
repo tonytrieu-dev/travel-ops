@@ -31,9 +31,17 @@ export function getSessionId(): string | null {
   return sessionId
 }
 
-export async function getBrowserSession(): Promise<void> {
-  const result = await request<{ session_id: string }>("/auth/browser/session", undefined, false)
+export function captureSession(): () => boolean {
+  const startedSessionId = sessionId
+  return () => startedSessionId === sessionId
+}
+
+export type BrowserSession = { session_id: string; role: string; mfa_verified: boolean }
+
+export async function getBrowserSession(): Promise<BrowserSession> {
+  const result = await request<BrowserSession>("/auth/browser/session", undefined, false)
   sessionId = result.session_id
+  return result
 }
 
 export function getAuthConfig(): Promise<AuthConfig> {
@@ -58,6 +66,7 @@ async function request<TResponse>(
 ): Promise<TResponse> {
   localStorage.removeItem("travel-agent.verifiedAccessToken")
   localStorage.removeItem("travel-agent.verifiedAccessTokenExpiresAt")
+  const isCurrentSession = captureSession()
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
     credentials: "include",
@@ -67,7 +76,7 @@ async function request<TResponse>(
     },
   })
 
-  if (response.status === 401 && announceAuthenticationRequired) {
+  if (response.status === 401 && announceAuthenticationRequired && isCurrentSession()) {
     sessionId = null
     window.dispatchEvent(new Event(AUTHENTICATION_REQUIRED_EVENT))
   }
@@ -109,53 +118,54 @@ export async function verifyMfa(session_id: string, code: string): Promise<Login
   return result
 }
 
-export function createTrip(tripRequestCreate: TripRequestCreate): Promise<TripRequestOut> {
+export function createTrip(tripRequestCreate: TripRequestCreate, signal?: AbortSignal): Promise<TripRequestOut> {
   return request<TripRequestOut>("/trips", {
     method: "POST",
-    body: JSON.stringify(tripRequestCreate),
+    body: JSON.stringify(tripRequestCreate), signal,
   })
 }
 
-export function listTrips(): Promise<TripRequestOut[]> {
-  return request<TripRequestOut[]>("/trips")
+export function listTrips(signal?: AbortSignal): Promise<TripRequestOut[]> {
+  return request<TripRequestOut[]>("/trips", { signal })
 }
 
-export function getTripSnapshot(tripId: number): Promise<TripSnapshotOut> {
-  return request<TripSnapshotOut>(`/trips/${tripId}/snapshot`)
+export function getTripSnapshot(tripId: number, signal?: AbortSignal): Promise<TripSnapshotOut> {
+  return request<TripSnapshotOut>(`/trips/${tripId}/snapshot`, { signal })
 }
 
 export function updateTrip(
   tripId: number,
   tripRequestUpdate: TripRequestUpdate,
+  signal?: AbortSignal,
 ): Promise<TripRequestOut> {
   return request<TripRequestOut>(`/trips/${tripId}`, {
     method: "PATCH",
-    body: JSON.stringify(tripRequestUpdate),
+    body: JSON.stringify(tripRequestUpdate), signal,
   })
 }
 
-export function searchTripFlights(tripId: number): Promise<FlightSearchOut> {
+export function searchTripFlights(tripId: number, signal?: AbortSignal): Promise<FlightSearchOut> {
   return request<FlightSearchOut>(`/trips/${tripId}/flights/search`, {
-    method: "POST",
+    method: "POST", signal,
   })
 }
 
-export function planTrip(tripId: number): Promise<PlanOut> {
+export function planTrip(tripId: number, signal?: AbortSignal): Promise<PlanOut> {
   return request<PlanOut>(`/trips/${tripId}/plan`, {
-    method: "POST",
+    method: "POST", signal,
   })
 }
 
-export function getTripExecution(tripId: number): Promise<ExecutionPanelOut> {
-  return request<ExecutionPanelOut>(`/trips/${tripId}/execution`)
+export function getTripExecution(tripId: number, signal?: AbortSignal): Promise<ExecutionPanelOut> {
+  return request<ExecutionPanelOut>(`/trips/${tripId}/execution`, { signal })
 }
 
-export function getAllExecution(): Promise<GlobalExecutionPanelOut> {
-  return request<GlobalExecutionPanelOut>("/execution")
+export function getAllExecution(beforeRunId?: number, signal?: AbortSignal): Promise<GlobalExecutionPanelOut> {
+  return request<GlobalExecutionPanelOut>(beforeRunId === undefined ? "/execution" : `/execution?before_run_id=${beforeRunId}`, { signal })
 }
 
-export function listBookings(): Promise<BookingLogOut[]> {
-  return request<BookingLogOut[]>("/bookings")
+export function listBookings(signal?: AbortSignal): Promise<BookingLogOut[]> {
+  return request<BookingLogOut[]>("/bookings", { signal })
 }
 
 export function requestBooking(
@@ -168,8 +178,8 @@ export function requestBooking(
   })
 }
 
-export function getBooking(logId: number): Promise<BookingLogOut> {
-  return request<BookingLogOut>(`/bookings/${logId}`)
+export function getBooking(logId: number, signal?: AbortSignal): Promise<BookingLogOut> {
+  return request<BookingLogOut>(`/bookings/${logId}`, { signal })
 }
 
 export function confirmBooking(logId: number): Promise<BookingLogOut> {
@@ -184,16 +194,16 @@ export function cancelBooking(logId: number): Promise<BookingLogOut> {
   return request<BookingLogOut>(`/bookings/${logId}/cancel`, { method: "POST" })
 }
 
-export function getConnectors(): Promise<ConnectorsOut> {
-  return request<ConnectorsOut>("/connectors")
+export function getConnectors(signal?: AbortSignal): Promise<ConnectorsOut> {
+  return request<ConnectorsOut>("/connectors", { signal })
 }
 
-export function getComplianceMonitoring(): Promise<ComplianceMonitoringOut> {
-  return request<ComplianceMonitoringOut>("/security/monitoring")
+export function getComplianceMonitoring(signal?: AbortSignal): Promise<ComplianceMonitoringOut> {
+  return request<ComplianceMonitoringOut>("/security/monitoring", { signal })
 }
 
-export function getSecurityEvent(eventId: number): Promise<Record<string, unknown>> {
-  return request<Record<string, unknown>>(`/security/events/${eventId}`)
+export function getSecurityEvent(eventId: number, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(`/security/events/${eventId}`, { signal })
 }
 
 export function setSlackConnectorEnabled(enabled: boolean): Promise<ConnectorsOut> {

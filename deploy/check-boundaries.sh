@@ -14,5 +14,7 @@ curl --fail --silent --cacert .device-certificates/ca.crt --cert ".device-certif
 # No certificate is refused even when the caller supplies forged gateway headers.
 status=$(curl -sk -o /dev/null -w '%{http_code}' -H 'X-Device-Verified: SUCCESS' https://localhost:8443/api/auth/config)
 [ "$status" != 200 ]
+# Provisioning receives enrollment output only, never certificate or authority keys.
+compose run --rm --no-deps -T migrate python -c 'from pathlib import Path; assert not list(Path("/provisioning").glob("*.key"))'
 # Runtime credentials may read/append evidence but cannot mutate or dismantle it.
 compose exec -T api python -m scripts.check_runtime_database

@@ -43,8 +43,10 @@ function PlanTrip(trip_details: string) -> PlannerLlmOutput {
         Pace the trip for the traveler's age and fitness. Older or less fit travelers get gentler
         activities, shorter days, and more rest; younger or fitter travelers can handle busier days.
 
-        Ground every activity in the research you are given, and set its source_url to a real URL
-        from that research. Treat flights as logistics, not activities.
+        Search flights when route or destination context is needed, then research activities in the
+        destination. You may refine the activity research up to three times when results are weak.
+        Ground every activity in returned research, and set its source_url to a real URL from that
+        research. Treat flights as logistics, not activities.
 
         ${ctx.output_format()}
 

@@ -6,27 +6,23 @@ change from the plain, already-tested versions of the functions they call.
 """
 
 from dbos import DBOS, DBOSConfig
-from pydantic_ai import UnexpectedModelBehavior
-from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.models import Model
 
 from app.adapters.activities_tavily import TavilyActivityProvider
 from app.adapters.flights_searchapi import get_flight_provider
-from app.agent.execution_log import execution_context, finish_planner_run
-from app.agent.planner import PlannerDeps, agent, default_usage_limits
-from app.config import CEREBRAS_MODEL, get_settings
+from app.agent import execution
+from app.agent.planner import agent
+from app.config import get_settings
 from app.db import get_session_factory
-from app.models import FlightSearchResult, TripRequest
+from app.models import FitnessLevel, FlightSearchResult, TripRequest
 from app.rate_limit import acquire_agent_run_slot, release_agent_run_slot
 from app.request_context import bind_correlation_id, correlation_id
 from app.repositories import booking_repository as repository
 from app.repositories import trips_repository
 from app.schemas import (
     BookingLogOut,
-    ClarificationOut,
     ItineraryOut,
     PlannerOutput,
-    PlanTooComplexOut,
 )
 
 
@@ -74,69 +70,24 @@ async def _fetch_booking_options_step(flight: FlightSearchResult) -> list[dict]:
 
 
 @DBOS.workflow(name="execute_booking")
-async def execute_booking_durable(log_id: int, trace_id: str | None = None) -> BookingLogOut:
+async def execute_booking_durable(
+    log_id: int,
+    actor_user_id: int,
+    tenant_id: str,
+    session_id: str,
+    trace_id: str | None = None,
+) -> BookingLogOut:
     with bind_correlation_id(trace_id):
         async with get_session_factory()() as session:
-            booking = await repository.execute_booking(session, log_id, _fetch_booking_options_step)
-            return BookingLogOut.model_validate(booking)
-
-
-async def _run_planner_agent(trip_id: int, prompt: str, trace_id: str) -> PlannerOutput:
-    settings = get_settings()
-    async with (
-        get_session_factory()() as session,
-        execution_context(session, trip_id, run_model=CEREBRAS_MODEL, correlation=trace_id),
-    ):
-        trip = await session.get(TripRequest, trip_id)
-        flight_provider = get_flight_provider(settings)
-        flight_provider.search_offers = _as_durable_step(
-            "search_flights_offers", flight_provider.search_offers
-        )
-        activity_provider = TavilyActivityProvider(settings.tavily_api_key.get_secret_value())
-        activity_provider.search = _as_durable_step("web_search", activity_provider.search)
-        deps = PlannerDeps(
-            flight_provider=flight_provider,
-            activity_provider=activity_provider,
-            fitness_level=trip.fitness_level if trip is not None else None,
-        )
-        async with agent.iter(prompt, deps=deps, usage_limits=default_usage_limits()) as agent_run:
-            try:
-                async for node in agent_run:
-                    pass
-            except Exception as error:
-                # Keeps whatever tool calls ran before the crash on the execution panel, not just successes.
-                await finish_planner_run(
-                    message_history=agent_run.ctx.state.message_history,
-                    usage=agent_run.ctx.state.usage,
-                    status="failed",
-                )
-                if isinstance(error, UsageLimitExceeded):
-                    # A real, expected outcome on a research-heavy trip (MAX_CONTEXT_TOKENS).
-                    return PlanTooComplexOut(
-                        reason=(
-                            "This trip needed more planning work than fits in one pass. "
-                            "Try a shorter trip or a simpler request."
-                        )
-                    )
-                if not isinstance(error, UnexpectedModelBehavior):
-                    raise
-                # The model exhausted its retries without producing a valid itinerary (e.g. no
-                # groundable activities) — ask the user instead of crashing the request.
-                return ClarificationOut(
-                    questions=[
-                        "I couldn't find enough verified activity information to complete this "
-                        "itinerary. Could you narrow the destination or share specific interests "
-                        "to search for?"
-                    ]
-                )
-
-            result = agent_run.result
-            assert result is not None, "agent_run finished iterating without producing a result"
-            await finish_planner_run(
-                message_history=result.all_messages(),
-                usage=result.usage,
+            booking = await repository.execute_booking(
+                session,
+                log_id,
+                _fetch_booking_options_step,
+                actor_user_id=actor_user_id,
+                tenant_id=tenant_id,
+                session_id=session_id,
             )
-    return result.output
+            return BookingLogOut.model_validate(booking)
 
 
 @DBOS.step(name="persist_itinerary")
@@ -146,20 +97,33 @@ async def _persist_itinerary_step(trip_id: int, prompt: str, output: ItineraryOu
 
 
 @DBOS.workflow(name="run_planner")
-async def _run_planner_workflow(trip_id: int, prompt: str, trace_id: str) -> PlannerOutput:
-    output = await _run_planner_agent(trip_id, prompt, trace_id)
+async def _run_planner_workflow(
+    trip_id: int, prompt: str, fitness_level: FitnessLevel, trace_id: str
+) -> PlannerOutput:
+    settings = get_settings()
+    flight_provider = get_flight_provider(settings)
+    flight_provider.search_offers = _as_durable_step("search_flights_offers", flight_provider.search_offers)
+    activity_provider = TavilyActivityProvider(settings.tavily_api_key.get_secret_value())
+    activity_provider.search = _as_durable_step("web_search", activity_provider.search)
+    output = await execution.run_planner(
+        trip_id, prompt, trace_id, fitness_level, flight_provider, activity_provider
+    )
     if isinstance(output, ItineraryOut):
         await _persist_itinerary_step(trip_id, prompt, output)
     return output
 
 
-async def run_planner_durable(trip_id: int, prompt: str, trace_id: str | None = None) -> PlannerOutput:
+async def run_planner_durable(
+    trip_id: int, prompt: str, fitness_level: FitnessLevel, trace_id: str | None = None
+) -> PlannerOutput:
     """Not itself a DBOS workflow: the concurrency slot is plain in-process state, and acquiring
     it inside a replayable workflow body risks a double-acquire if DBOS re-enters that body
     during its own internal record/persist resolution (observed empirically) — so the slot wraps
     the durable call from the outside instead."""
     await acquire_agent_run_slot()
     try:
-        return await _run_planner_workflow(trip_id, prompt, trace_id or correlation_id())
+        return await _run_planner_workflow(
+            trip_id, prompt, fitness_level, trace_id or correlation_id()
+        )
     finally:
         release_agent_run_slot()

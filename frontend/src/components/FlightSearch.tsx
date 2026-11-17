@@ -39,6 +39,7 @@ function FlightDirection({ label, legs }: { label: string; legs: FlightLegOut[] 
       <span />
       <span className="text-slate-600">
         {formatDateTime(firstLeg.depart_at)} → {formatDateTime(lastLeg.arrive_at)}
+        {` · ${legs.length === 1 ? "Nonstop" : `${legs.length - 1} ${legs.length === 2 ? "stop" : "stops"}`}`}
       </span>
     </div>
   )
@@ -54,8 +55,7 @@ export function FlightSearch({
   onSearchNewFlight,
   onSelectOffer,
 }: FlightSearchProps) {
-  // Only non-stop flights are offered — drop any itinerary with a layover.
-  const nonStopOffers = searchResult?.offers.filter((offer) => offer.stops === 0) ?? []
+  const offers = searchResult?.offers ?? []
 
   return (
     <section className="space-y-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -111,9 +111,9 @@ export function FlightSearch({
         </p>
       )}
 
-      {searchResult && nonStopOffers.length > 0 && (
+      {searchResult && offers.length > 0 && (
         <ul className="space-y-3">
-          {nonStopOffers.map((offer) => {
+          {offers.map((offer) => {
             const outboundEnd = offer.legs.findIndex(
               (leg) => leg.arrival_airport === trip.destination_airport,
             )
@@ -138,6 +138,7 @@ export function FlightSearch({
                     />
                     <div className="space-y-3">
                       <p className="font-semibold text-slate-900">{offer.carrier}</p>
+                      {!trip.return_date && <p className="text-sm text-slate-500">{offer.stops === 0 ? "Nonstop" : `${offer.stops} ${offer.stops === 1 ? "stop" : "stops"}`}</p>}
                       {trip.return_date ? (
                         <>
                           <FlightDirection label="Outbound" legs={outboundLegs} />

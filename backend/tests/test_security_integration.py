@@ -199,7 +199,7 @@ def test_pending_mfa_token_cannot_reach_protected_routes(enforced_client) -> Non
     assert enforced_client.get("/api/trips", headers=headers).status_code == 403
 
 
-def test_global_execution_history_applies_trip_read_role_policy(enforced_client) -> None:
+def test_global_execution_history_applies_history_role_policy(enforced_client) -> None:
     from sqlalchemy import select
     from sqlmodel import col
 
@@ -213,12 +213,23 @@ def test_global_execution_history_applies_trip_read_role_policy(enforced_client)
     assert response.status_code == 403, response.text
     denial = run_db(lambda session: session.scalar(
         select(SecurityEvent).where(
-            col(SecurityEvent.action) == "trip.read",
+            col(SecurityEvent.action) == "execution.history.read",
             col(SecurityEvent.resource) == "execution",
             col(SecurityEvent.decision) == "deny",
         )
     ))
     assert denial is not None
+
+
+@pytest.mark.parametrize("role, expected", [("traveler", 403), ("trip-planner", 200), ("admin", 200)])
+def test_history_collections_require_history_permissions(enforced_client, role, expected) -> None:
+    _seed_user("history@tenant-a.test", "tenant-a", role, "device-a")
+    token = _sign_in(enforced_client, "history@tenant-a.test", "device-a")
+    headers = {"Authorization": f"Bearer {token}"}
+    for path in ("/api/execution", "/api/bookings"):
+        response = enforced_client.get(path, headers=headers)
+        assert response.status_code == expected, f"{role} {path}: {response.text}"
+    assert enforced_client.get("/api/trips", headers=headers).status_code == 200
 
 
 @pytest.mark.parametrize("enforced", [True, False])
@@ -512,7 +523,7 @@ def test_browser_login_rejects_cross_origin_and_omits_bearer_token(enforced_clie
         ))
         assert event is not None
         assert event.tenant_id == "unknown" and event.actor_user_id is None
-        assert event.session_id is None and event.device_id == "unknown"
+        assert event.session_id is None and event.device_id.startswith("preauth:")
 
     run_db(origin_denial)
 
@@ -548,7 +559,10 @@ def test_browser_cookie_session_reads_but_rejects_cross_origin_writes(enforced_c
     _browser_sign_in(enforced_client)
     origin = {"Origin": "http://localhost:5173"}
 
-    assert enforced_client.get("/api/auth/browser/session").status_code == 200
+    browser_session = enforced_client.get("/api/auth/browser/session")
+    assert browser_session.status_code == 200
+    assert browser_session.json()["role"] == "traveler"
+    assert browser_session.json()["mfa_verified"] is True
     assert enforced_client.get("/api/trips").status_code == 200
 
     payload = {"origin": "JFK", "destination": "Paris", "destination_airport": "CDG",

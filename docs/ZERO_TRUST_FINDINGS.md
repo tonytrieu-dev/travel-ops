@@ -1,4 +1,25 @@
-Current implementation update (2026-10-31): ordinary accounts now enroll unique TOTP secrets;
+Current validation (2026-11-17): **45 no-database backend tests passed, 79 deselected**.
+The full backend run hit database connection errors during fixture setup and was stopped.
+Frontend tests passed in all eight files, the frontend production build passed, and pyrefly
+reported zero errors (six warnings). Independent reviews found a render-triggered request loop
+in three polling panels; passing stable API functions fixed it, and both previously hanging
+frontend files now complete. Booking execution validates the principal before its idempotent
+return without a duplicate query; a malformed SearchApi success payload has a focused adapter
+regression test. Browser layout, PostgreSQL integration, and live Compose verification remain
+pending. Historical counts below describe completed runs, not the current suite.
+
+Historical implementation verification (2026-11-16): **109 backend tests passed** on disposable
+PostgreSQL 16.2. The cached local distribution lacked `uuid-ossp`; the test installation used
+native `gen_random_uuid()` through a v4 compatibility extension. This does not verify the
+standard extension or container deployment. Runtime settings now reject disabled enforcement;
+the CA signing key is separated from deployable material; global execution history is paged.
+Role-aware navigation now hides history, security and connector panels from
+travelers; dedicated history collection permissions enforce the boundary on the API. Connecting
+round-trip offers remain selectable, with stops labeled per direction. All eight frontend test
+files, frontend build/lint and backend type checking passed. Browser layout and live Compose
+verification remain pending. Earlier counts below describe historical runs, not the current suite.
+
+Historical implementation update (2026-10-31): ordinary accounts now enroll unique TOTP secrets;
 the public legacy secret is retired by migration. Origin-policy denials are audited without
 attribution, and `platform-operator` can investigate unattributed and cross-tenant security
 evidence. The optional [isolated deployment](../README.md#running-it) adds CA-validated device
@@ -91,7 +112,7 @@ verdicts (H2, H3, H5) were executed against real PostgreSQL 16.2: the full
 suites passed (42 tests), on a rootless local server (`pgserver`) with a `uuid-ossp`
 extension shim supplied for the DBOS durable-execution layer's startup migration.
 
-**H1 — Credential hardening (identity and access management).**
+**H1; Credential hardening (identity and access management).**
 *Hypothesis:* the password store makes offline guessing against a stolen hash
 computationally expensive enough to matter. *Prediction:* per-verification cost on the
 order of tens of milliseconds, bounding a single core to low-tens of guesses per second.
@@ -103,21 +124,21 @@ verification (≈12–16 single-core guesses/s) across runs. *Verdict:* **suppor
 iteration count and salt are the reproducible claim; the wall-clock figure is
 hardware-dependent and illustrative, re-measured per machine.
 
-**H2 — Audit immutability (continuous monitoring).**
+**H2; Audit immutability (continuous monitoring).**
 *Hypothesis:* recorded security evidence cannot be altered or erased through the
 application's data path. *Prediction:* every UPDATE, DELETE, and TRUNCATE against an
 audit table is rejected, 100% of attempts. *Method:* database-trigger enforcement,
 asserted by `test_append_only.py::test_audit_rows_are_append_only` and
 `::test_audit_tables_cannot_be_truncated`. *Result:* all mutation and truncation
-attempts raise and the rows survive unchanged. *Verdict:* **supported — executed against
+attempts raise and the rows survive unchanged. *Verdict:* **supported; executed against
 real PostgreSQL 16.2** (both tests passed).
 
-**H3 — Automatic containment (incident response) — a hypothesis the evidence first
+**H3; Automatic containment (incident response); a hypothesis the evidence first
 rejected.**
 *Hypothesis:* the denial-threshold mechanism contains a hostile session without harming
 legitimate ones. *Prediction:* repeated unauthorized requests revoke only the offending
 session, never an innocent one. *Method:* cross-tenant and failed-authentication
-regressions. *Initial result (rejected):* finding F1 — four attacker login failures
+regressions. *Initial result (rejected):* finding F1; four attacker login failures
 against a victim plus one victim denial revoked the **victim's** session; ordinary
 access went from 200 to 401. The prediction was falsified: containment was poisoning an
 innocent session. *Correction and re-test:* failed logins no longer claim the target's
@@ -127,30 +148,30 @@ windows. *Final result:* the bound is 5 denials within a 5-minute window
 the next request returns 401, while the innocent session is untouched
 (`test_failed_authentication_records_target_without_verified_actor`;
 `test_compliance.py::test_cross_tenant_denials_produce_traceable_containment`).
-*Verdict:* **rejected as first designed, supported after correction — executed against
+*Verdict:* **rejected as first designed, supported after correction; executed against
 real PostgreSQL 16.2** (all three regressions passed).
 
-**H4 — Signed-token forgery resistance (identity and access management).**
+**H4; Signed-token forgery resistance (identity and access management).**
 *Hypothesis:* a request cannot be authenticated with a tampered or forged bearer token.
 *Prediction:* 100% of tampered tokens are rejected while valid tokens are accepted.
 *Method:* `scripts.token_integrity`, 250 trials × 4 tamper classes (flipped signature,
 forged claims with a reused signature, malformed, empty). *Result:* 1000/1000 tampered
 tokens rejected, 250/250 valid tokens accepted (reproduced). *Verdict:* **supported.**
 
-**H5 — MFA enforcement on privileged actions (multi-factor authentication).**
+**H5; MFA enforcement on privileged actions (multi-factor authentication).**
 *Hypothesis:* a session that has not completed TOTP cannot perform a privileged action,
 while the same identity can still perform ordinary reads. *Prediction:* every privileged
 request from a password-only or pending-MFA session is refused (403), and non-privileged
 reads from a password-only session succeed (200). *Method:* HTTP regressions against real
 PostgreSQL 16.2. *Result:* a password-only session reads `/api/trips` (200) but its
 `booking.confirm` is refused (403, "MFA required"); a pending-MFA token is refused on a
-protected route (403) — the full set of privileged actions is gated, reads are not
+protected route (403); the full set of privileged actions is gated, reads are not
 (`test_security_integration.py::test_password_only_login_allows_reads_but_not_booking_approval`,
-`::test_pending_mfa_token_cannot_reach_protected_routes`). *Verdict:* **supported —
+`::test_pending_mfa_token_cannot_reach_protected_routes`). *Verdict:* **supported -
 executed against real PostgreSQL 16.2.** This is a pass/fail enforcement count, not a
 timing measurement; it closes the MFA key-area with a test-backed result.
 
-**H6 — Network micro-segmentation (configuration-verified, runtime pending).**
+**H6; Network micro-segmentation (configuration-verified, runtime pending).**
 *Hypothesis:* the isolated deployment confines each tier to its own private network, so
 the browser-facing gateway cannot reach the database, neither the API nor the database
 is reachable from the host, and the device identity a client presents cannot be forged
@@ -162,7 +183,7 @@ static verification of `compose.zero-trust.yml` and `deploy/gateway.conf.templat
 inspection (the Docker daemon was unreachable in this environment, so runtime packet-drop
 and the TLS handshake were not exercised). *Result (verified by configuration):*
 `application` and `database` networks are both `internal: true`; the `gateway` service
-joins only `[ingress, application]` — not `database`; the sole host binding is
+joins only `[ingress, application]`; not `database`; the sole host binding is
 `127.0.0.1:8443:443` (the API and PostgreSQL publish no host port); the API's
 `DATABASE_URL` uses `travel_runtime` while only provisioning containers use
 `travel_owner`; and the gateway sets `ssl_verify_client on` and *overwrites*
@@ -174,7 +195,7 @@ topology and gateway policy are confirmed, the live network behavior is not.
 
 A latency cost was also observed (p50 +4.3 ms, p95 +8.3 ms, −9.5% throughput over a
 100-request in-process sample in `SECURITY_EVALUATION.md`); it is reported as an aside,
-not a hypothesis — the sample is too small for tail percentiles (p99 would need a larger
+not a hypothesis; the sample is too small for tail percentiles (p99 would need a larger
 run) and excludes real network, TLS, and reverse-proxy cost.
 
 Reproduce H1 from `backend` with `uv run python -m scripts.credential_cost`, and H4 with
@@ -377,9 +398,9 @@ code and passed after. No application code path was left without a runnable chec
 
 | ID | Before / problem | Design or implementation response | Status / evidence |
 |---|---|---|---|
-| AR1 | Booking admission preloaded the row via `session.get`; the later `SELECT ... FOR UPDATE` returned the cached instance, so a concurrent cancel was invisible and a confirm/execute could revive a CANCELLED booking and write a false transition | `_lock_booking` re-reads under the lock with `execution_options(populate_existing=True)`; confirm and execute share the request session, execute uses its own workflow session | Verified: synchronized confirm-vs-cancel and execute-vs-cancel HTTP regressions (`test_booking_regressions.py`) — cancel commits first, the gated action then 409s, booking stays CANCELLED, no spurious transition, no options fetch |
-| AR2 | A traveler visiting the Connectors tab issued a privileged `GET /api/connectors` on every mount; five denials within the window tripped session containment through ordinary navigation | `ConnectorsPanel` reuses the polled-resource denial cache, so a known-denied resource is not re-requested; backend authorization stays authoritative | Verified: six forbidden remounts make exactly one request (`security.test.js`) |
-| AR3 | Lowering a traveler's fitness (or age) left the cached high-intensity itinerary in place; `/plan` returned it without re-running the low-fitness safety validator | `age` and `fitness_level` join the itinerary-invalidation criteria (flight offers, which do not depend on them, are untouched) | Verified: `test_trip_planning_regressions.py` — fitness/age change drops the itinerary and forces a replan; a non-criteria edit keeps it |
+| AR1 | Booking admission preloaded the row via `session.get`; the later `SELECT ... FOR UPDATE` returned the cached instance, so a concurrent cancel was invisible and a confirm/execute could revive a CANCELLED booking and write a false transition | `_lock_booking` re-reads under the lock with `execution_options(populate_existing=True)`; confirm and execute share the request session, execute uses its own workflow session | Verified: synchronized confirm-vs-cancel and execute-vs-cancel HTTP regressions (`test_booking_regressions.py`); cancel commits first, the gated action then 409s, booking stays CANCELLED, no spurious transition, no options fetch |
+| AR2 | A traveler visiting the Connectors tab issued a privileged `GET /api/connectors` on every mount; five denials within the window tripped session containment through ordinary navigation | Role-aware navigation hides the panel from travelers; the shared polling hook caches denials for the current session | Verified: `App.test.js` checks role-based navigation; `hooks/usePolledResource.test.js` checks denial caching across remounts and replacement sessions |
+| AR3 | Lowering a traveler's fitness (or age) left the cached high-intensity itinerary in place; `/plan` returned it without re-running the low-fitness safety validator | `age` and `fitness_level` join the itinerary-invalidation criteria (flight offers, which do not depend on them, are untouched) | Verified: `test_trip_planning_regressions.py`; fitness/age change drops the itinerary and forces a replan; a non-criteria edit keeps it |
 | AR4 | Expiry was derived from booking-request time, so a stale cached quote (up to the ~45-minute cache+TTL ceiling) was re-granted a fresh 30-minute approval window | Expiry derives from the original quote timestamp; already-elapsed quotes are rejected; the cross-trip cache copy preserves the source quote timestamp | Verified: 14-minute quote yields a ~16-minute window, 16-minute quote is rejected EXPIRED; cross-trip copy keeps `created_at` (`test_booking_regressions.py`) |
 
 **Durability and state integrity:**

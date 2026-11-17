@@ -29,7 +29,7 @@ function stateStyles(state: BookingState): string {
 }
 
 /** Names the acting principal for an audit reader. A transition with no actor is the system
- * expiring a stale fare rather than a person deciding — the distinction the trail exists for.
+ * expiring a stale fare rather than a person deciding. The distinction the trail exists for.
  * The email is resolved server-side; falling back to the id keeps an anonymized user's decision
  * attributable rather than silently blank. */
 function actorLabel(transition: BookingTransitionOut): string {
@@ -68,7 +68,7 @@ function ApprovalTrail({ booking, routeLabel }: { booking: BookingLogOut; routeL
 
       {booking.transitions.length === 0 ? (
         <p className="px-4 py-4 text-sm text-slate-500">
-          Awaiting a human decision — no approval has been recorded yet.
+          Awaiting a human decision. No approval has been recorded yet.
         </p>
       ) : (
         <ol className="px-4 py-4">
@@ -110,7 +110,7 @@ function ApprovalTrail({ booking, routeLabel }: { booking: BookingLogOut; routeL
 
 export function ApprovalHistoryPanel({ trips, isRunActive }: ApprovalHistoryPanelProps) {
   const [stateFilter, setStateFilter] = useState<string>("all")
-  const { data, errorMessage } = usePolledResource<BookingLogOut[]>({
+  const { data, errorMessage, hasLoaded } = usePolledResource<BookingLogOut[]>({
     fetcher: listBookings,
     isRunActive,
     resourceKey: "approval-history",
@@ -147,10 +147,14 @@ export function ApprovalHistoryPanel({ trips, isRunActive }: ApprovalHistoryPane
     )
   }
 
+  if (!hasLoaded) {
+    return <p role="status" className="rounded-xl border border-dashed border-slate-300 bg-white p-6 text-sm text-slate-500">Loading approval history…</p>
+  }
+
   if (bookings.length === 0) {
     return (
       <p className="rounded-xl border border-dashed border-slate-300 bg-white p-6 text-sm text-slate-500">
-        No approvals yet — request a booking from a trip to see its human-approval trail here.
+        No approvals yet. Request a booking from a trip to see its human-approval trail here.
       </p>
     )
   }

@@ -17,7 +17,7 @@ function labelFor(name: string): string {
 }
 
 export function LiveActivity({ tripId, isRunActive }: LiveActivityProps) {
-  const fetcher = useMemo(() => () => getTripExecution(tripId), [tripId])
+  const fetcher = useMemo(() => (signal: AbortSignal) => getTripExecution(tripId, signal), [tripId])
   const { data: panelData } = usePolledResource({
     fetcher,
     isRunActive,
@@ -30,8 +30,7 @@ export function LiveActivity({ tripId, isRunActive }: LiveActivityProps) {
 
   const events = (panelData?.events ?? []).filter((event) => event.seq > clearedBeforeSeq)
   const recent = [...events].reverse()
-  // events is backend-ordered ascending by seq (trips_repository.py's ORDER BY seq), so the
-  // last element already holds the max — no scan needed.
+  // events arrive ascending by seq (trips_repository.py ORDER BY seq), so the last holds the max.
   const maxSeq = panelData?.events.at(-1)?.seq ?? 0
 
   return (
@@ -66,7 +65,7 @@ export function LiveActivity({ tripId, isRunActive }: LiveActivityProps) {
 
       {recent.length === 0 ? (
         <p className="text-sm text-slate-500">
-          Nothing yet — you'll see what the agent is doing here once it starts working.
+          Nothing yet. You'll see what the agent is doing here once it starts working.
         </p>
       ) : (
         <ol className="max-h-72 space-y-1.5 overflow-y-auto">

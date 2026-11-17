@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import {
   AUTHENTICATION_REQUIRED_EVENT,
   SESSION_CHANGED_STORAGE_KEY,
@@ -20,7 +20,7 @@ import { Questionnaire } from "./components/Questionnaire"
 import { useActiveTrip } from "./hooks/useActiveTrip"
 import { YourTripsPanel } from "./components/YourTripsPanel"
 
-export function LoginPanel({ onAuthenticated }: { onAuthenticated: () => void }) {
+export function LoginPanel({ onAuthenticated }: { onAuthenticated: () => void | Promise<void> }) {
   const [email, setEmail] = useState("traveler@tenant-a.test")
   const [password, setPassword] = useState("")
   const [deviceId, setDeviceId] = useState("device-a-traveler")
@@ -34,7 +34,7 @@ export function LoginPanel({ onAuthenticated }: { onAuthenticated: () => void })
     try {
       const result = await login(email, password, deviceId)
       if (result.mfa_required) setSessionId(result.session_id)
-      else onAuthenticated()
+      else await onAuthenticated()
     } catch (error) {
       setError(extractErrorMessage(error))
     }
@@ -46,7 +46,7 @@ export function LoginPanel({ onAuthenticated }: { onAuthenticated: () => void })
     setError(null)
     try {
       await verifyMfa(sessionId, code)
-      onAuthenticated()
+      await onAuthenticated()
     } catch (error) {
       setError(extractErrorMessage(error))
     }
@@ -87,18 +87,30 @@ export function LoginPanel({ onAuthenticated }: { onAuthenticated: () => void })
 
 type TabKey = "trip" | "trips" | "execution" | "approvals" | "connectors" | "compliance"
 
-const TABS: { key: TabKey; label: string }[] = [
-  { key: "trip", label: "Plan a trip" },
-  { key: "trips", label: "Your trips" },
-  { key: "execution", label: "Agent execution history" },
-  { key: "approvals", label: "Approval history" },
-  { key: "connectors", label: "Connectors" },
-  { key: "compliance", label: "Security monitoring" },
+const TABS: { key: TabKey; label: string; roles: string[]; privileged?: boolean; icon: string }[] = [
+  { key: "trip", label: "Plan a trip", roles: ["traveler", "trip-planner", "admin"], icon: "M12 5v14m-7-7h14" },
+  { key: "trips", label: "Your trips", roles: ["traveler", "trip-planner", "admin"], icon: "M4 7h16v13H4zM9 7V4h6v3" },
+  { key: "execution", label: "Agent execution history", roles: ["trip-planner", "admin"], icon: "M4 12h4l3-8 3 16 3-8h3" },
+  { key: "approvals", label: "Approval history", roles: ["trip-planner", "admin"], icon: "M5 4h14v16H5zM8 12l3 3 5-6" },
+  { key: "connectors", label: "Connectors", roles: ["security-operator", "admin"], privileged: true, icon: "M9 3v5m6-5v5M7 8h10v4a5 5 0 0 1-10 0zM12 17v4" },
+  { key: "compliance", label: "Security monitoring", roles: ["security-operator", "platform-operator", "admin"], privileged: true, icon: "M12 3l8 3v6c0 4-8 9-8 9s-8-5-8-9V6z" },
 ]
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
   const [activeTab, setActiveTab] = useState<TabKey>("trip")
+  const [role, setRole] = useState("traveler")
+  const [mfaVerified, setMfaVerified] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const tabs = TABS.filter((tab) => tab.roles.includes(role) && (!tab.privileged || mfaVerified))
+  const currentTab = tabs.find((tab) => tab.key === activeTab) ?? tabs[0]
+  const canPlanTrips = ["traveler", "trip-planner", "admin"].includes(role)
+  const loadSession = useCallback(async () => {
+    const session = await getBrowserSession()
+    setRole(session.role)
+    setMfaVerified(session.mfa_verified)
+    setIsAuthenticated(true)
+  }, [])
 
   const {
     trip,
@@ -123,7 +135,7 @@ function App() {
     handleAnswerClarification,
     handleSearchAgain,
     handleSelectTrip,
-  } = useActiveTrip(isAuthenticated)
+  } = useActiveTrip(isAuthenticated && canPlanTrips)
 
   useEffect(() => {
     const requireAuthentication = () => window.location.reload()
@@ -142,43 +154,49 @@ function App() {
   useEffect(() => {
     getAuthConfig()
       .then(async ({ enforced }) => {
-        if (enforced) await getBrowserSession()
-        setIsAuthenticated(true)
+        if (enforced) await loadSession()
+        else setIsAuthenticated(true)
       })
       .catch(() => setIsAuthenticated(false))
-  }, [])
+  }, [loadSession])
 
   if (isAuthenticated === null) return null
-  if (!isAuthenticated) return <LoginPanel onAuthenticated={() => setIsAuthenticated(true)} />
+  if (!isAuthenticated) return <LoginPanel onAuthenticated={loadSession} />
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50 text-slate-900 md:flex-row">
-      <aside className="flex w-full shrink-0 flex-col border-b border-slate-200 bg-white md:sticky md:top-0 md:h-screen md:w-80 md:border-b-0 md:border-r">
-        <div className="border-b border-slate-200 px-6 py-7">
-          <h1 className="cursor-default text-3xl font-bold tracking-tight text-slate-900">
+      <aside className={`m-3 flex shrink-0 flex-col rounded-2xl border border-slate-200 bg-white shadow-sm md:sticky md:top-3 md:h-[calc(100vh-1.5rem)] ${sidebarCollapsed ? "md:w-20" : "md:w-72"}`}>
+        <div className={`flex items-center gap-2 border-b border-slate-200 py-5 ${sidebarCollapsed ? "justify-center px-2" : "justify-between px-5"}`}>
+          <h1 className={sidebarCollapsed ? "sr-only" : "text-xl font-bold tracking-tight text-slate-900"}>
             Travel Agent
           </h1>
-          <p className="mt-3 text-sm leading-6 text-slate-500">
-            AI trip planner with human approval before airline checkout
-          </p>
+          <button type="button" aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-expanded={!sidebarCollapsed} aria-controls="primary-navigation"
+            onClick={() => setSidebarCollapsed((previous) => !previous)}
+            className="rounded-lg border border-slate-200 p-2 text-slate-600 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-indigo-600">
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M4 4h16v16H4zM9 4v16" /></svg>
+          </button>
         </div>
 
-        <nav className="space-y-2 p-4" aria-label="Primary">
-          {TABS.map((tab) => {
-            const isActive = activeTab === tab.key
+        <nav id="primary-navigation" className="space-y-3 p-3" aria-label="Primary">
+          {tabs.map((tab) => {
+            const isActive = currentTab?.key === tab.key
             return (
               <button
                 key={tab.key}
                 type="button"
+                aria-label={tab.label}
+                title={sidebarCollapsed ? tab.label : undefined}
                 onClick={() => setActiveTab(tab.key)}
                 aria-current={isActive ? "page" : undefined}
-                className={`flex min-h-11 w-full items-center justify-between rounded-lg border px-4 py-2.5 text-left text-sm font-medium transition ${
+                className={`flex min-h-12 w-full items-center gap-3 rounded-xl border px-3 py-3 text-left text-sm font-medium transition focus-visible:outline-2 focus-visible:outline-indigo-600 ${sidebarCollapsed ? "justify-center" : ""} ${
                   isActive
-                    ? "border-indigo-100 bg-indigo-50 text-indigo-700"
+                    ? "border-indigo-300 bg-indigo-50 text-indigo-800 shadow-sm"
                     : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
                 }`}
               >
-                {tab.label}
+                <svg className="shrink-0" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={tab.icon} /></svg>
+                <span className={sidebarCollapsed ? "sr-only" : "flex-1"}>{tab.label}</span>
                 {tab.key === "execution" && isRunActive && (
                   <span className="relative flex h-2 w-2" aria-label="run in progress">
                     <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400 opacity-75" />
@@ -193,9 +211,9 @@ function App() {
         <div className="flex-1" />
       </aside>
 
-      <div className="flex min-h-screen flex-1 flex-col">
-        <main className="mx-auto w-full max-w-3xl flex-1 space-y-6 px-6 py-8">
-          {activeTab === "trip" && (
+      <div className="flex min-h-screen min-w-0 flex-1 flex-col">
+        <main aria-label={currentTab?.label ?? "Workspace"} className="mx-auto w-full min-w-0 max-w-4xl flex-1 space-y-6 px-4 py-6 sm:px-6">
+          {currentTab?.key === "trip" && (
             <>
               {restoreTripError && <p role="alert">{restoreTripError}</p>}
               {isRestoringTrip && <p role="status">Loading trip…</p>}
@@ -220,12 +238,14 @@ function App() {
                     onSelectOffer={setSelectedOffer}
                   />
 
-                  <BookingModule
-                    key={selectedOffer ? selectedOffer.id : "none"}
-                    trip={trip}
-                    selectedOffer={selectedOffer}
-                    onSearchAgain={handleSearchAgain}
-                  />
+                  {(["traveler", "admin"].includes(role)) && (
+                    <BookingModule
+                      key={selectedOffer ? selectedOffer.id : "none"}
+                      trip={trip}
+                      selectedOffer={selectedOffer}
+                      onSearchAgain={handleSearchAgain}
+                    />
+                  )}
 
                   <ItineraryPanel
                     trip={trip}
@@ -242,7 +262,7 @@ function App() {
             </>
           )}
 
-          {activeTab === "trips" && (
+          {currentTab?.key === "trips" && (
             <YourTripsPanel
               trips={trips}
               selectedTripId={trip?.id ?? null}
@@ -250,14 +270,14 @@ function App() {
             />
           )}
 
-          {activeTab === "execution" && <ExecutionPanel trips={trips} isRunActive={isRunActive} />}
+          {currentTab?.key === "execution" && <ExecutionPanel trips={trips} isRunActive={isRunActive} />}
 
-          {activeTab === "approvals" && (
+          {currentTab?.key === "approvals" && (
             <ApprovalHistoryPanel trips={trips} isRunActive={isRunActive} />
           )}
 
-          {activeTab === "connectors" && <ConnectorsPanel />}
-          {activeTab === "compliance" && <CompliancePanel />}
+          {currentTab?.key === "connectors" && <ConnectorsPanel />}
+          {currentTab?.key === "compliance" && <CompliancePanel />}
         </main>
 
         <footer className="mt-10 border-t border-slate-200 py-6 text-center text-xs text-slate-400">

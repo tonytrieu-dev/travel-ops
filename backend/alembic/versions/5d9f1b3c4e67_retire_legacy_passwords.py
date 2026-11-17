@@ -22,5 +22,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Retired hashes cannot be recovered; accounts must enroll a new password.
-    pass
+    raise RuntimeError("This migration is forward-only: retired password hashes cannot be restored")

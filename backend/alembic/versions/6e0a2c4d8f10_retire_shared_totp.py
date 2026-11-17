@@ -15,5 +15,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Retired public secrets must never be restored.
-    pass
+    raise RuntimeError("This migration is forward-only: retired shared TOTP secrets cannot be restored")

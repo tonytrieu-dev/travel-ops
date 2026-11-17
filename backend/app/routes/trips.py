@@ -5,7 +5,7 @@ raise TripError, rendered as a ProblemDetail by the app-level handler in main.py
 
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.flights_searchapi import derive_flight_legs, get_flight_provider
@@ -182,7 +182,11 @@ async def plan_trip(
     session: AsyncSession = Depends(get_session),
 ) -> PlanOut:
     output = await repository.get_or_create_itinerary(
-        session, trip_id, lambda trip_id, prompt: run_planner_durable(trip_id, prompt, correlation_id())
+        session,
+        trip_id,
+        lambda trip_id, prompt, fitness_level: run_planner_durable(
+            trip_id, prompt, fitness_level, correlation_id()
+        ),
     )
     if isinstance(output, PlanTooComplexOut):
         return output
@@ -248,12 +252,17 @@ async def get_trip_execution(
     responses={403: {"model": ProblemDetail}},
 )
 async def get_all_execution(
+    page_size: int = Query(default=20, ge=1, le=100),
+    before_run_id: int | None = Query(default=None, gt=0),
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(admit_collection_route("trip.read", "execution")),
+    user: User = Depends(admit_collection_route("execution.history.read", "execution")),
 ) -> GlobalExecutionPanelOut:
     assert user.id is not None, "admit_collection_route always returns a persisted user"
-    runs_with_details = await repository.list_execution_runs_for_user(session, user.id)
+    runs_with_details, next_before_run_id = await repository.list_execution_runs_for_user(
+        session, user.id, page_size=page_size, before_run_id=before_run_id
+    )
     return GlobalExecutionPanelOut(
+        next_before_run_id=next_before_run_id,
         agent_runs=[
             _to_agent_run_out(run, steps, events) for run, steps, events in runs_with_details
         ]

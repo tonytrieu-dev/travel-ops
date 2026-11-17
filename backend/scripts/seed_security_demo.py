@@ -15,7 +15,7 @@ async def main() -> None:
             await seed_identities(session)
     finally:
         await engine.dispose()
-    print("Seeded synthetic users. Password: demo-password. TOTP secret: JBSWY3DPEHPK3PXP")
+    print("Seeded synthetic users. Disposable credentials are documented in README.md.")
 
 
 if __name__ == "__main__":

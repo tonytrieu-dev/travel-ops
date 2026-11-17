@@ -1,5 +1,8 @@
 """Trip route boundaries that are easy to regress without an endpoint-level check."""
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+
 from tests.db_helpers import get_trip, run_db, seed_trip
 
 
@@ -84,3 +87,53 @@ def test_flight_search_finalizes_live_cached_and_failed_runs(client, flight_sear
     assert len(failed_runs) == 1
     assert failed_runs[0]["status"] == "failed" and failed_runs[0]["finished_at"] is not None
     assert failed_runs[0]["steps"] == []
+
+
+def test_concurrent_flight_searches_have_separate_execution_runs(
+    client, flight_search_spy, monkeypatch
+) -> None:
+    trip = client.post("/api/trips", json=_trip_payload()).json()
+    search_url = f"/api/trips/{trip['id']}/flights/search"
+    barrier = Barrier(2)
+    original_search = flight_search_spy.search_offers
+
+    async def synchronized_search(*arguments, **keywords):
+        barrier.wait(timeout=5)
+        return await original_search(*arguments, **keywords)
+
+    monkeypatch.setattr(flight_search_spy, "search_offers", synchronized_search)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = list(executor.map(lambda _: client.post(search_url), range(2)))
+
+    assert [response.status_code for response in responses] == [200, 200]
+    runs = client.get(f"/api/trips/{trip['id']}/execution").json()["agent_runs"]
+    assert len(runs) == 2
+    assert all(run["status"] == "completed" for run in runs)
+
+
+def test_execution_history_pages_owned_runs_with_matching_details(client) -> None:
+    from tests.db_helpers import seed_agent_run, seed_execution_event
+
+    trip = client.post("/api/trips", json=_trip_payload()).json()
+
+    async def seed_history(session):
+        other_trip_id = await seed_trip(session)
+        first = await seed_agent_run(session, trip["id"])
+        second = await seed_agent_run(session, trip["id"])
+        await seed_agent_run(session, other_trip_id)
+        await seed_execution_event(session, trip["id"], agent_run_id=first, name="older")
+        await seed_execution_event(session, trip["id"], agent_run_id=second, name="newer")
+        return first, second
+
+    first, second = run_db(seed_history)
+    page = client.get("/api/execution?page_size=1").json()
+    assert [run["id"] for run in page["agent_runs"]] == [second]
+    assert [event["name"] for event in page["agent_runs"][0]["events"]] == ["newer"]
+    assert len(page["agent_runs"][0]["steps"]) == 1
+    assert page["next_before_run_id"] == second
+    page = client.get(f"/api/execution?page_size=1&before_run_id={second}").json()
+    assert [run["id"] for run in page["agent_runs"]] == [first]
+    assert [event["name"] for event in page["agent_runs"][0]["events"]] == ["older"]
+    assert page["next_before_run_id"] is None
+    for query in ("page_size=0", "page_size=101", "before_run_id=-1"):
+        assert client.get(f"/api/execution?{query}").status_code == 422
