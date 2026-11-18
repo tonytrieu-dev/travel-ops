@@ -12,11 +12,12 @@ def run(*arguments: str) -> None:
     subprocess.run(["openssl", *arguments], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def _validate_device_id(parser: argparse.ArgumentParser, device_id: str) -> None:
-    if not re.fullmatch(r"[A-Za-z0-9-]{1,64}", device_id):
-        parser.error("device ID must contain 1–64 letters, digits or hyphens")
-    if device_id in {"ca", "server"}:
-        parser.error("ca and server are reserved names")
+def _validate_device_id(device_id: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,63}", device_id):
+        raise argparse.ArgumentTypeError("device ID must start with a letter or digit and contain 1–64 letters, digits or hyphens")
+    if device_id.casefold() in {"ca", "server"}:
+        raise argparse.ArgumentTypeError("ca and server are reserved names")
+    return device_id
 
 
 def _ensure_authority(parser: argparse.ArgumentParser, directory: Path, authority: Path) -> None:
@@ -58,12 +59,19 @@ def _issue_certificate(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("device_id")
+    parser.add_argument("device_id", type=_validate_device_id)
     arguments = parser.parse_args()
-    _validate_device_id(parser, arguments.device_id)
     os.umask(0o077)
     directory = Path(".device-certificates")
     authority = Path(".device-authority")
+    if directory.is_symlink() or authority.is_symlink():
+        parser.error("certificate and authority directories must not be symbolic links")
+    if (directory / "ca.crt").is_symlink():
+        parser.error("CA certificate must not be a symbolic link")
+    for suffix in ("key", "crt", "csr", "extensions", "password", "p12"):
+        output = directory / f"{arguments.device_id}.{suffix}"
+        if output.exists() or output.is_symlink():
+            parser.error("device already issued or output exists; refusing to overwrite")
     _ensure_authority(parser, directory, authority)
     shutil.copyfile(authority / "ca.crt", directory / "ca.crt")
     for name, subject, usage in (("server", "localhost", "serverAuth"), (arguments.device_id, arguments.device_id, "clientAuth")):

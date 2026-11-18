@@ -9,10 +9,19 @@ import pytest
 from pydantic import ValidationError
 
 from app.config import Settings
-from app.security_identity import issue_access_token
+from app.security_identity import issue_access_token, totp_code
 from app.models import SecuritySession, User
 
 pytestmark = pytest.mark.no_database
+
+
+@pytest.mark.parametrize("timestamp,expected", [
+    (59, "287082"), (1111111109, "081804"), (1111111111, "050471"),
+    (1234567890, "005924"), (2000000000, "279037"), (20000000000, "353130"),
+])
+def test_totp_matches_rfc_6238_sha1_vectors(timestamp: int, expected: str) -> None:
+    secret = base64.b32encode(b"12345678901234567890").decode()
+    assert totp_code(secret, timestamp) == expected
 
 
 def _settings(*, enforced: bool) -> Settings:

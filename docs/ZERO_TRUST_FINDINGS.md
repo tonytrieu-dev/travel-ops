@@ -1,12 +1,18 @@
-Current validation (2026-11-17): **45 no-database backend tests passed, 79 deselected**.
+Current validation (2026-11-17): **64 no-database backend tests passed, 79 deselected**;
+the focused device/enrollment/security checks passed **26 cases**.
 The full backend run hit database connection errors during fixture setup and was stopped.
 Frontend tests passed in all eight files, the frontend production build passed, and pyrefly
 reported zero errors (six warnings). Independent reviews found a render-triggered request loop
 in three polling panels; passing stable API functions fixed it, and both previously hanging
 frontend files now complete. Booking execution validates the principal before its idempotent
 return without a duplicate query; a malformed SearchApi success payload has a focused adapter
-regression test. Browser layout, PostgreSQL integration, and live Compose verification remain
-pending. Historical counts below describe completed runs, not the current suite.
+regression test. The security fixes also confine enrollment output, reject certificate output
+symlinks and path-like device IDs, verify the BAML download checksum, and run the API/gateway
+without root. RFC 6238 SHA-1 vectors pass because SHA-1 is required for this existing TOTP
+interoperability boundary; it is not used for password hashing. The remaining npm audit findings
+come from an unpatched picomatch advisory in build tooling. Browser layout, PostgreSQL
+integration, Docker runtime, and live Compose verification remain pending. Historical counts
+below describe completed runs, not the current suite.
 
 Historical implementation verification (2026-11-16): **109 backend tests passed** on disposable
 PostgreSQL 16.2. The cached local distribution lacked `uuid-ossp`; the test installation used

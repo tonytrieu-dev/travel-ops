@@ -1,8 +1,13 @@
 # Security-control monitoring: implementation and findings
 
-Current validation (2026-11-17): 45 no-database backend tests passed, with 79 database tests
-deselected. The full backend run hit database connection errors during fixture setup and was
-stopped. All eight frontend test files, frontend build, and backend type checking passed.
+Current validation (2026-11-17): 64 no-database backend tests passed, with 79 database tests
+deselected; the focused device/enrollment/security checks passed 26 cases. The full backend run
+hit database connection errors during fixture setup and was stopped. All eight frontend test
+files, frontend build, and backend type checking passed. Security remediation also passed
+RFC 6238 SHA-1 compatibility vectors, confined enrollment output, rejected certificate output
+symlinks and path-like device IDs, and verified the BAML download checksum. SHA-1 remains only
+for the existing TOTP protocol; the remaining npm audit findings are an unpatched picomatch
+advisory in build tooling. Docker runtime and live Compose verification remain pending.
 Historical counts below are not current full-suite results.
 
 October 29 follow-up: containment and evaluator windows now use exact session IDs,

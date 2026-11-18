@@ -291,6 +291,10 @@ and password files private, and never distribute `ca.key`: anyone holding that k
 another trusted device certificate. The gateway receives only the CA certificate and its own
 server certificate and key.
 
+The gateway runs without root privileges. On Linux, set `DEVICE_CERTIFICATE_USER_ID` and
+`DEVICE_CERTIFICATE_GROUP_ID` in `.env` to `id -u` and `id -g` for the certificate owner so it
+can read the private server key without broadening file permissions. Both default to 1000.
+
 The gateway validates the client certificate and overwrites device-identity headers. The API
 checks the gateway secret and matches the certified device ID to the account or session during
 login, MFA, and protected requests. A copied access token alone cannot satisfy this boundary.
@@ -327,8 +331,11 @@ docker compose -f compose.zero-trust.yml up --build -d
 ```
 
 Compose starts PostgreSQL, applies migrations using the owner credential, grants the runtime
-role its permissions, and then starts the API and gateway. The backend image installs BAML
-toolchain 0.23.0 and runs `baml generate`, so the ignored SDK is generated during the build.
+role its permissions, and then starts the API and gateway. The backend build verifies the
+published SHA-256 checksum of BAML 0.23.0 before generating the ignored SDK. Python dependencies
+are installed from locked wheels without build scripts; frontend dependencies skip install
+scripts. The API and gateway run as non-root users, and the gateway listens on container port
+8443 while the browser URL remains `https://localhost:8443`.
 The frontend is built with `/api` as its API URL and served from the same HTTPS origin.
 
 Only the gateway publishes a host port, at `https://localhost:8443`. Gateway and API share an
@@ -350,7 +357,7 @@ A trusted database operator enrolls an existing account with:
 install -d -m 700 .identity-provisioning
 docker compose -f compose.zero-trust.yml run --rm --user "$(id -u):$(id -g)" migrate \
   python -m scripts.enroll_identity \
-  --email <existing-account-email> --provisioning-file /provisioning/enrollment-uri
+  --email <existing-account-email> --provisioning-file enrollment-uri
 ```
 
 The command prompts for a password and writes a unique authenticator provisioning URI to
@@ -359,6 +366,9 @@ securely to the account owner, import the URI into an authenticator, and remove 
 enrollment. Provisioning preserves the account's ownership and policy and revokes its existing
 sessions. For a password-enrolled account whose shared MFA secret was retired, add `--reset-mfa`
 to rotate its authenticator while preserving its password.
+
+`--provisioning-file` accepts a filename only. Output is confined to `/provisioning` in the
+container or the repository's `.identity-provisioning` directory for a local invocation.
 
 The [synthetic seed command](#zero-trust-demo) is only for a disposable demonstration: its
 accounts deliberately use public passwords and authenticator secrets. Do not use those
@@ -409,10 +419,14 @@ and set `TEST_DATABASE_URL` to its asyncpg URL. Database tests truncate their ta
 cases; never point them at application data. See the
 [database preparation commands](docs/SECURITY_EVALUATION.md#repeat-the-validation).
 
-Latest local validation (2026-11-17): 45 no-database backend tests and all eight frontend test
-files passed; backend type checking and the frontend production build passed. The full backend
-run hit database connection errors during fixture setup and was stopped. PostgreSQL integration
-and live Compose verification remain pending; see the [validation record](docs/ZERO_TRUST_FINDINGS.md).
+Latest local validation (2026-11-17): 64 no-database backend tests passed, with 79 database
+tests deselected; focused device/enrollment/security checks passed 26 cases. All eight frontend
+test files, backend type checking, and the frontend production build passed. The full backend
+run hit database connection errors during fixture setup and was stopped. PostgreSQL integration,
+Docker runtime, and live Compose verification remain pending; see the
+[validation record](docs/ZERO_TRUST_FINDINGS.md). The remaining npm audit findings are an
+unpatched picomatch advisory in build tooling; SHA-1 is retained only for RFC 6238 TOTP
+interoperability, not password hashing.
 
 The zero-trust decision path (identity-claim verification, role/MFA policy, tenant ownership,
 browser segment spoofing, denial-threshold containment) is exercised against a live PostgreSQL

@@ -10,6 +10,39 @@ pytestmark = pytest.mark.no_database
 ISSUER = Path(__file__).resolve().parents[2] / "deploy" / "issue-device.py"
 
 
+@pytest.mark.parametrize("device_id", ["../escape", "/tmp/escape", "--help", "-device", "CA", "SERVER"])
+def test_device_id_cannot_select_paths_options_or_reserved_files(tmp_path: Path, device_id: str) -> None:
+    result = subprocess.run(
+        [sys.executable, str(ISSUER), "--", device_id], cwd=tmp_path, capture_output=True,
+    )
+    assert result.returncode != 0
+    assert not (tmp_path / ".device-authority").exists()
+
+
+def test_device_issuance_refuses_existing_password_symlink(tmp_path: Path) -> None:
+    certificates = tmp_path / ".device-certificates"
+    certificates.mkdir()
+    unrelated = tmp_path / "unrelated"
+    unrelated.write_text("preserve")
+    (certificates / "device-test.password").symlink_to(unrelated)
+    result = subprocess.run([sys.executable, str(ISSUER), "device-test"], cwd=tmp_path, capture_output=True)
+    assert result.returncode != 0
+    assert unrelated.read_text() == "preserve"
+    assert not (tmp_path / ".device-authority").exists()
+
+
+def test_device_issuance_refuses_ca_certificate_symlink(tmp_path: Path) -> None:
+    certificates = tmp_path / ".device-certificates"
+    certificates.mkdir()
+    unrelated = tmp_path / "unrelated"
+    unrelated.write_text("preserve")
+    (certificates / "ca.crt").symlink_to(unrelated)
+    result = subprocess.run([sys.executable, str(ISSUER), "device-test"], cwd=tmp_path, capture_output=True)
+    assert result.returncode != 0
+    assert unrelated.read_text() == "preserve"
+    assert not (tmp_path / ".device-authority").exists()
+
+
 def test_device_issuance_separates_authority_and_refuses_overwrite(tmp_path: Path) -> None:
     result = subprocess.run([sys.executable, str(ISSUER), "device-test"], cwd=tmp_path, capture_output=True)
     assert result.returncode == 0
