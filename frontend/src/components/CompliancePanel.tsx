@@ -1,6 +1,7 @@
-import { useRef, useState } from "react"
+import { useEffect, useState } from "react"
 import { ApiError, getComplianceMonitoring, getSecurityEvent } from "../api/client"
 import { usePolledResource } from "../hooks/usePolledResource"
+import { useRequestLifetime } from "../hooks/useRequestLifetime"
 
 const CONTROL_NAMES: Record<string, string> = {
   privileged_mfa: "MFA on privileged actions",
@@ -26,24 +27,24 @@ export function CompliancePanel() {
   const [evidence, setEvidence] = useState<Record<string, unknown> | null>(null)
   const [evidenceError, setEvidenceError] = useState<string | null>(null)
   const assessment = data?.assessments.find((item) => item.id === assessmentId) ?? data?.assessments[0]
-  // A slow evidence fetch must not land under an assessment the user has since switched away from.
-  const latestEvidenceRequest = useRef(0)
+  const { captureRequest, invalidateRequests } = useRequestLifetime()
 
-  const invalidateEvidence = () => {
-    latestEvidenceRequest.current += 1
+  useEffect(() => {
+    invalidateRequests()
     setEvidence(null)
     setEvidenceError(null)
-  }
+  }, [assessment?.id, invalidateRequests])
 
   const inspectEvidence = async (eventId: number) => {
-    invalidateEvidence()
-    const requestId = latestEvidenceRequest.current
+    const request = captureRequest()
+    setEvidence(null)
+    setEvidenceError(null)
     try {
-      const loaded = await getSecurityEvent(eventId)
-      if (requestId !== latestEvidenceRequest.current) return
+      const loaded = await getSecurityEvent(eventId, request.signal)
+      if (!request.isCurrent()) return
       setEvidence(loaded)
     } catch (error) {
-      if (requestId !== latestEvidenceRequest.current) return
+      if (!request.isCurrent()) return
       setEvidenceError(error instanceof ApiError ? error.message : "Could not load evidence.")
     }
   }
@@ -62,7 +63,7 @@ export function CompliancePanel() {
       {assessment && (
         <>
           <label className="block text-sm font-medium">Assessment history
-            <select className="mt-1 block w-full rounded border border-slate-300 p-2" value={assessment.id} onChange={(event) => { setAssessmentId(Number(event.target.value)); invalidateEvidence() }}>
+            <select className="mt-1 block w-full rounded border border-slate-300 p-2" value={assessment.id} onChange={(event) => setAssessmentId(Number(event.target.value))}>
               {data?.assessments.map((item) => <option key={item.id} value={item.id}>{new Date(item.assessed_at).toLocaleString()} · #{item.id}</option>)}
             </select>
           </label>

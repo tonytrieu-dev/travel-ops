@@ -32,16 +32,20 @@ export function useActiveTrip(isAuthenticated: boolean | null) {
   const isRunActive = isSearchingFlights || isPlanning
 
   const { captureRequest, invalidateRequests } = useRequestLifetime()
+  const { captureRequest: captureFlightRequest, invalidateRequests: invalidateFlightRequests } = useRequestLifetime()
+  const { captureRequest: capturePlanRequest, invalidateRequests: invalidatePlanRequests } = useRequestLifetime()
   const { captureRequest: captureTripListRequest } = useRequestLifetime()
   const beginSelection = useCallback(() => {
     invalidateRequests()
+    invalidateFlightRequests()
+    invalidatePlanRequests()
     setIsCreatingTrip(false)
     setIsRestoringTrip(false)
     setRestoreTripError(null)
     setIsPlanning(false)
     setIsSearchingFlights(false)
     return captureRequest()
-  }, [captureRequest, invalidateRequests])
+  }, [captureRequest, invalidateRequests, invalidateFlightRequests, invalidatePlanRequests])
 
   const restoreTrip = useCallback((tripId: number) => {
     const request = beginSelection()
@@ -107,7 +111,7 @@ export function useActiveTrip(isAuthenticated: boolean | null) {
 
   const handleSearchFlights = async () => {
     if (!trip || isRestoringTrip) return
-    const request = captureRequest()
+    const request = captureFlightRequest()
     setIsSearchingFlights(true)
     setFlightSearchError(null)
     setSelectedOffer(null)
@@ -135,26 +139,32 @@ export function useActiveTrip(isAuthenticated: boolean | null) {
   const handlePlan = async (answers?: ClarificationAnswers) => {
     if (!trip || isRestoringTrip) return
     if (answers) {
-      invalidateRequests()
+      invalidateFlightRequests()
       // The invalidated search won't reset this when it resolves, so clear it here.
       setIsSearchingFlights(false)
       clearFlightAndBookingState()
     }
-    const request = captureRequest()
+    const request = capturePlanRequest()
     setIsPlanning(true)
     setPlanError(null)
     try {
       if (answers) {
         const updatedTrip = await updateTrip(trip.id, answers, request.signal)
         if (!request.isCurrent()) return
+        invalidateFlightRequests()
+        setIsSearchingFlights(false)
+        clearFlightAndBookingState()
         setTrip(updatedTrip)
         localStorage.setItem(ACTIVE_TRIP_ID_STORAGE_KEY, String(updatedTrip.id))
       }
       const planOutcome = await planTrip(trip.id, request.signal)
       if (!request.isCurrent()) return
       setPlanResult(planOutcome)
-      if (planOutcome.status === "needs_clarification" || planOutcome.status === "too_complex")
+      if (planOutcome.status === "needs_clarification" || planOutcome.status === "too_complex") {
+        invalidateFlightRequests()
+        setIsSearchingFlights(false)
         clearFlightAndBookingState()
+      }
     } catch (error) {
       if (!request.isCurrent()) return
       setPlanError(extractErrorMessage(error))

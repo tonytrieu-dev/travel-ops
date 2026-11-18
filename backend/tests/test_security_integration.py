@@ -426,7 +426,7 @@ def test_legacy_passwords_are_retired_and_require_enrollment(enforced_client) ->
     from sqlalchemy import select
     from app.models import User, SecuritySession
     from sqlmodel import col
-    from scripts.enroll_identity import enroll_identity
+    from app.repositories.credentials_repository import enroll_identity
 
     user_id = _seed_user("legacy-salt@example.test", "tenant-a", "traveler", "device-a")
     other_id = _seed_user("modern@example.test", "tenant-a", "traveler", "device-b")

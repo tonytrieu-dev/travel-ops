@@ -1,4 +1,41 @@
-Current validation (2026-11-17): **62 no-database backend tests passed, 78 deselected**;
+## Current validation (2026-11-17)
+
+All **158 backend tests passed** against a disposable native PostgreSQL 14.24 cluster, migrated
+from an empty database through head. This run used the distribution's standard extensions,
+without a UUID compatibility shim. It includes concurrent flight searches/edits and actual
+credential/session rollback after enrollment delivery failure. External flight, research, and
+model providers remain test doubles; this is not a live-provider or crash-recovery experiment.
+
+All eight frontend test files, production build/lint, pyrefly (zero errors, six warnings),
+shell syntax checks, and Compose configuration validation passed. The new enrollment module
+owns delivery and commit coordination; its tests cover write/flush/file-and-directory-sync
+failure, cancellation, ambiguous commit retention, exclusive output, and symlink rejection.
+The host helper rejects symlinks before preparing the directory or invoking Docker. Evidence
+inspection reuses the shared request lifetime; independent trip actions no longer cancel each
+other, and slow booking polls can finish.
+
+Docker Desktop was stopped, so container builds/startup, gateway TLS/network isolation, and
+browser-to-container verification remain unexecuted. The native database run does not establish
+those deployment guarantees. The temporary database cluster was stopped after validation.
+
+## Merge-review scanner dispositions (2026-11-17)
+
+The three SonarCloud annotations on PR #4 were traced through their callers. These are
+review dispositions, not a claim that the remote quality gate has been cleared:
+
+- `security_identity.py` uses keyed HMAC-SHA-1 for existing RFC 6238 authenticator
+  interoperability. Password hashing uses salted PBKDF2-SHA-256. Replacing the TOTP digest
+  alone would invalidate enrolled authenticators; the existing RFC vector tests protect it.
+- `issue-device.py` passes an argument list to OpenSSL without a shell. Device identifiers
+  must start alphanumeric and contain only ASCII alphanumerics/hyphens, so they cannot inject
+  options, subject delimiters, or path separators. Reserved names and existing/symlink output
+  paths are rejected. The issuance/rejection tests exercise these trust boundaries.
+- The five high npm audit findings share the unpatched `picomatch` ReDoS advisory
+  GHSA-fc5q-39xc-vjpf. Registry latest remains 4.0.7, which the advisory affects. Exposure is
+  build/development tooling; deployed nginx receives static assets, and application input is
+  not used as a glob pattern. Retain compatible versions pending an upstream patch.
+
+Historical validation (2026-11-17): **62 no-database backend tests passed, 78 deselected**;
 the focused device/enrollment/security checks passed **25 cases**.
 The full backend run hit database connection errors during fixture setup and was stopped.
 Frontend tests passed in all eight files, the frontend production build passed, and pyrefly

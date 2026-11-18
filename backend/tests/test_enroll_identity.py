@@ -96,6 +96,35 @@ def test_enrollment_provisions_independent_authenticators() -> None:
     run_db(work)
 
 
+def test_undelivered_enrollment_rolls_back_credentials_and_revocation(monkeypatch, tmp_path) -> None:
+    from app.security_identity import create_security_session
+    from app.services import identity_enrollment
+
+    def fail_sync(_descriptor):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(identity_enrollment.os, "fsync", fail_sync)
+
+    async def work(session):
+        user = User(email="delivery@example.test", totp_secret="original-secret")
+        session.add(user)
+        await session.commit()
+        previous_session = await create_security_session(session, user, user.device_id)
+        previous_password = user.password_hash
+        with pytest.raises(OSError, match="disk full"):
+            await identity_enrollment.deliver_identity_enrollment(
+                session, "delivery@example.test", "replacement-password", tmp_path, "uri", reset_mfa=True,
+            )
+        await session.refresh(user)
+        await session.refresh(previous_session)
+        assert user.totp_secret == "original-secret"
+        assert user.password_hash == previous_password
+        assert previous_session.revoked_at is None
+        assert not (tmp_path / "uri").exists()
+
+    run_db(work)
+
+
 def test_synthetic_seed_repairs_retired_mfa_and_revokes_sessions():
     from app.security_identity import create_security_session, totp_code, verify_session_mfa
     from app.repositories.credentials_repository import seed_identities

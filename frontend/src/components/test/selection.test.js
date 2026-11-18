@@ -1,10 +1,11 @@
 import "../../test/setup.js"
-import { deferred, response } from "../../test/setup.js"
+import { deferred, response, session } from "../../test/setup.js"
 import assert from "node:assert/strict"
 import test from "node:test"
 import { createElement } from "react"
 import { render, act, fireEvent } from "@testing-library/react"
 const { CompliancePanel } = await import("../CompliancePanel.tsx")
+const assessment = (id) => ({ id, assessed_at: "2026-10-29", window_start: "2026-10-28", window_end: "2026-10-29", evaluator_version: "1", results: [{ control: "privileged_mfa", status: "pass", summary: "checked", evidence_event_ids: [id], details: {} }] })
 
 for (const outboundStops of [0, 1]) {
 test(`round-trip offers remain selectable with accurate direction stops (outbound=${outboundStops}, return=1)`, async () => {
@@ -26,17 +27,71 @@ test(`round-trip offers remain selectable with accurate direction stops (outboun
 })
 }
 
-test("switching assessments discards outstanding evidence responses", async (context) => {
+for (const fails of [false, true]) {
+test(`switching assessments discards outstanding evidence responses (failure=${fails})`, async (context) => {
   const pending = deferred()
-  const assessment = (id) => ({ id, assessed_at: "2026-10-29", window_start: "2026-10-28", window_end: "2026-10-29", evaluator_version: "1", results: [{ control: "privileged_mfa", status: "pass", summary: "checked", evidence_event_ids: [id], details: {} }] })
-  context.mock.method(globalThis, "fetch", async (url) => url.endsWith("/monitoring") ? response({ stale: false, assessments: [assessment(1), assessment(2)] }) : pending.promise)
+  let evidenceSignal
+  context.mock.method(globalThis, "fetch", async (url, options) => {
+    if (url.endsWith("/monitoring")) return response({ stale: false, assessments: [assessment(1), assessment(2)] })
+    evidenceSignal = options.signal
+    return pending.promise
+  })
   const view = render(createElement(CompliancePanel))
   await act(async () => {})
   fireEvent.click(view.getByText("Event #1"))
   fireEvent.change(view.getByRole("combobox"), { target: { value: "2" } })
-  await act(async () => pending.resolve(response({ marker: "obsolete evidence" })))
+  await act(async () => pending.resolve(fails ? response({ detail: "obsolete evidence" }, 500) : response({ marker: "obsolete evidence" })))
   assert.doesNotMatch(view.container.textContent, /obsolete evidence/)
+  assert.equal(evidenceSignal?.aborted, true)
 })
+}
+
+for (const fails of [false, true]) {
+test(`a replaced session discards pending evidence (failure=${fails})`, async (context) => {
+  await session("evidence-original")
+  const pending = deferred()
+  context.mock.method(globalThis, "fetch", async (url) => url.endsWith("/monitoring")
+    ? response({ stale: false, assessments: [assessment(1)] }) : pending.promise)
+  const view = render(createElement(CompliancePanel))
+  await act(async () => {})
+  fireEvent.click(view.getByText("Event #1"))
+  await session("evidence-replacement")
+  await act(async () => pending.resolve(fails ? response({ detail: "previous session evidence" }, 500) : response({ marker: "previous session evidence" })))
+  assert.doesNotMatch(view.container.textContent, /previous session evidence/)
+  assert.equal(view.queryByText("Selected evidence"), null)
+  assert.equal(view.queryByRole("alert"), null)
+})
+}
+
+for (const evidenceState of ["pending", "loaded", "error"]) {
+test(`a new latest assessment clears ${evidenceState} evidence`, async (context) => {
+  const pending = deferred()
+  let poll, monitoringRequests = 0, evidenceSignal
+  context.mock.method(globalThis, "setInterval", (callback) => { poll = callback; return 1 })
+  context.mock.method(globalThis, "clearInterval", () => {})
+  context.mock.method(globalThis, "fetch", async (url, options) => {
+    if (url.endsWith("/monitoring")) return response({ stale: false, assessments: ++monitoringRequests === 1
+      ? [assessment(1)] : [assessment(2), assessment(1)] })
+    evidenceSignal = options.signal
+    return pending.promise
+  })
+  const view = render(createElement(CompliancePanel))
+  await act(async () => {})
+  fireEvent.click(view.getByText("Event #1"))
+  if (evidenceState !== "pending") {
+    await act(async () => pending.resolve(evidenceState === "error"
+      ? response({ detail: "old assessment evidence" }, 500) : response({ marker: "old assessment evidence" })))
+    assert.match(view.container.textContent, /old assessment evidence/)
+  }
+  await act(async () => { await poll() })
+  assert.equal(view.getByRole("combobox").value, "2")
+  if (evidenceState === "pending") await act(async () => pending.resolve(response({ marker: "old assessment evidence" })))
+  assert.doesNotMatch(view.container.textContent, /old assessment evidence/)
+  assert.equal(view.queryByText("Selected evidence"), null)
+  assert.equal(view.queryByRole("alert"), null)
+  assert.equal(evidenceSignal?.aborted, true)
+})
+}
 
 test("execution history keeps older pages reachable without fetching every run", async (context) => {
   const { ExecutionPanel } = await import("../ExecutionPanel.tsx")

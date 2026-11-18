@@ -352,9 +352,7 @@ Ordinary accounts must already exist with the intended tenant, role, and device 
 A trusted database operator enrolls an existing account with:
 
 ```bash
-install -d -m 700 .identity-provisioning
-docker compose -f compose.zero-trust.yml run --rm --user "$(id -u):$(id -g)" migrate \
-  python -m scripts.enroll_identity \
+sh deploy/enroll-identity.sh \
   --email <existing-account-email> --provisioning-file enrollment-uri
 ```
 
@@ -362,11 +360,18 @@ The command prompts for a password and writes a unique authenticator provisionin
 `.identity-provisioning/enrollment-uri` on the host. The file must not already exist. Transfer it
 securely to the account owner, import the URI into an authenticator, and remove the file after
 enrollment. Provisioning preserves the account's ownership and policy and revokes its existing
-sessions. For a password-enrolled account whose shared MFA secret was retired, add `--reset-mfa`
+sessions. The helper prepares the private directory as the host operator and runs the dedicated
+enrollment target with that operator's user and group IDs. Migrations do not mount enrollment
+output. Direct CLI use (`python -m scripts.enroll_identity`) remains available.
+For a password-enrolled account whose shared MFA secret was retired, add `--reset-mfa`
 to rotate its authenticator while preserving its password.
 
 `--provisioning-file` accepts a filename only. Output is confined to `/provisioning` in the
 container or the repository's `.identity-provisioning` directory for a local invocation.
+The enrollment module syncs the private URI before committing credentials and session
+revocation. Rejected or undelivered enrollments roll back and remove their reserved output.
+If committing fails after delivery, preserve the URI and verify account state before retrying:
+the database and filesystem cannot form one atomic transaction.
 
 The [synthetic seed command](#zero-trust-demo) is only for a disposable demonstration: its
 accounts deliberately use public passwords and authenticator secrets. Do not use those
@@ -417,11 +422,10 @@ and set `TEST_DATABASE_URL` to its asyncpg URL. Database tests truncate their ta
 cases; never point them at application data. See the
 [database preparation commands](docs/SECURITY_EVALUATION.md#repeat-the-validation).
 
-Latest local validation (2026-11-17): 62 no-database backend tests passed, with 78 database
-tests deselected; focused device/enrollment/security checks passed 25 cases. All eight frontend
-test files, backend type checking, and the frontend production build passed. The full backend
-run hit database connection errors during fixture setup and was stopped. PostgreSQL integration,
-Docker runtime, and live Compose verification remain pending; see the
+Latest local validation (2026-11-17): all 158 backend tests passed against a freshly migrated,
+disposable PostgreSQL 14.24 database. All eight frontend test files, backend type checking,
+frontend production build/lint, shell syntax checks, and Compose configuration validation passed.
+Docker runtime and live TLS/network isolation remain unverified; see the
 [validation record](docs/ZERO_TRUST_FINDINGS.md). The remaining npm audit findings are an
 unpatched picomatch advisory in build tooling; SHA-1 is retained only for RFC 6238 TOTP
 interoperability, not password hashing.

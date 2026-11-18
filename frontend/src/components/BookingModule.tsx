@@ -76,13 +76,18 @@ export function BookingModule({ trip, selectedOffer, onSearchAgain }: BookingMod
     const terminal = ["EXECUTED", "CANCELLED", "EXPIRED"]
     if (terminal.includes(bookingLog.state)) return
 
+    let isPolling = false
     const poll = setInterval(async () => {
+      if (isPolling) return
+      isPolling = true
       const request = captureRequest()
       try {
         const refreshed = await getBooking(bookingLog.id, request.signal)
         if (request.isCurrent()) setBookingLog(refreshed)
       } catch {
         // Transient poll failures are not surfaced. The next successful poll self-corrects.
+      } finally {
+        isPolling = false
       }
     }, POLL_INTERVAL_MS)
     return () => clearInterval(poll)

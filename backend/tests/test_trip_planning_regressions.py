@@ -9,7 +9,7 @@ from sqlalchemy import select, text
 import pytest
 
 from app.models import FitnessLevel, FlightSearchResult, Itinerary, TripRequest
-from tests.db_helpers import run_db, seed_flight_search_results, seed_itinerary
+from tests.db_helpers import get_flight_search_results, run_db, seed_flight_search_results, seed_itinerary
 
 
 def create_trip(client):
@@ -157,20 +157,51 @@ def test_durable_workflow_persists_without_the_http_caller(client, planner_spy) 
 def test_flight_search_edit_race(client, flight_search_spy, monkeypatch):
     started, release = Event(), Event()
     original = flight_search_spy.search_offers
+
     async def paused(*arguments):
         started.set()
-        assert await asyncio.to_thread(release.wait, 10)
+        assert await asyncio.to_thread(release.wait, 10), 'flight search was never released'
         return await original(*arguments)
+
     monkeypatch.setattr(flight_search_spy, 'search_offers', paused)
-    trip = client.post('/api/trips', json={'origin':'JFK','destination':'Paris','destination_airport':'CDG','depart_date':'2030-08-01','age':30,'fitness_level':'high'}).json()
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        search = pool.submit(client.post, f"/api/trips/{trip['id']}/flights/search")
+    trip_id = create_trip(client)
+    search_url = f'/api/trips/{trip_id}/flights/search'
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        search = pool.submit(client.post, search_url)
         try:
-            assert started.wait(10)
-            assert client.patch(f"/api/trips/{trip['id']}", json={'destination':'London','destination_airport':'LHR'}).status_code == 200
+            assert started.wait(10), 'flight search never started'
+            edit = pool.submit(
+                client.patch, f'/api/trips/{trip_id}',
+                json={'destination': 'London', 'destination_airport': 'LHR'},
+            )
+            deadline = monotonic() + 5
+            while not run_db(lambda session: session.scalar(text(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
+                "WHERE datname = current_database() AND cardinality(pg_blocking_pids(pid)) > 0 "
+                "AND query LIKE '%trip_request%' AND query LIKE '%FOR UPDATE%')"
+            ))):
+                assert not edit.done(), 'edit bypassed the flight search trip lock'
+                assert monotonic() < deadline, 'edit never waited for the trip lock'
+                sleep(0.01)
         finally:
             release.set()
-        assert search.result(timeout=15).status_code == 409
-    snapshot = client.get(f"/api/trips/{trip['id']}/snapshot").json()
+        response = search.result(timeout=15)
+        edited = edit.result(timeout=15)
+    assert response.status_code == 200, response.text
+    assert edited.status_code == 200, edited.text
+    old_offers = response.json()['offers']
+    assert old_offers
+    assert flight_search_spy.calls == 1
+    assert flight_search_spy.last_search_params['arrival_id'] == 'CDG'
+    snapshot = client.get(f'/api/trips/{trip_id}/snapshot').json()
     assert snapshot['trip']['destination_airport'] == 'LHR'
     assert snapshot['flight_search'] is None, 'Old CDG search was persisted under updated LHR trip'
+    assert run_db(lambda session: get_flight_search_results(session, trip_id)) == []
+
+    refreshed = client.post(search_url)
+    assert refreshed.status_code == 200, refreshed.text
+    assert flight_search_spy.calls == 2
+    assert flight_search_spy.last_search_params['arrival_id'] == 'LHR'
+    new_offers = refreshed.json()['offers']
+    assert new_offers
+    assert {offer['id'] for offer in old_offers}.isdisjoint(offer['id'] for offer in new_offers)

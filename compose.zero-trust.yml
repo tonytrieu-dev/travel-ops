@@ -16,19 +16,33 @@ services:
       retries: 20
   migrate:
     build: ./backend
-    environment:
+    environment: &provisioning_environment
       CEREBRAS_API_KEY: provisioning
       SEARCHAPI_API_KEY: provisioning
       TAVILY_API_KEY: provisioning
       DATABASE_URL: postgresql+asyncpg://travel_owner:${OWNER_DATABASE_PASSWORD:?required}@postgres/travel_agent
-      PROVISIONING_DIRECTORY: /provisioning
-    volumes:
-      - ./.identity-provisioning:/provisioning
     command: [alembic, upgrade, head]
     networks: [database]
     depends_on:
       postgres:
         condition: service_healthy
+  enroll:
+    profiles: [provisioning]
+    build: ./backend
+    environment:
+      <<: *provisioning_environment
+      PROVISIONING_DIRECTORY: /provisioning
+    volumes:
+      - type: bind
+        source: ./.identity-provisioning
+        target: /provisioning
+        bind:
+          create_host_path: false
+    entrypoint: [python, -m, scripts.enroll_identity]
+    networks: [database]
+    depends_on:
+      grants:
+        condition: service_completed_successfully
   grants:
     image: postgres:16
     environment:

@@ -35,7 +35,7 @@ async def enroll_identity(session: AsyncSession, email: str, password: str, *, r
     await _replace_authenticator(
         session, user, base64.b32encode(secrets.token_bytes(20)).decode().rstrip("="),
     )
-    await session.commit()
+    await session.flush()
     return f"otpauth://totp/TravelOps:{quote(email, safe='')}?secret={user.totp_secret}&issuer=TravelOps"
 
 

@@ -1,9 +1,13 @@
 """Trip route boundaries that are easy to regress without an endpoint-level check."""
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from threading import Event
+from time import monotonic, sleep
 
-from tests.db_helpers import get_trip, run_db, seed_trip
+from sqlalchemy import text
+
+from tests.db_helpers import get_flight_search_results, get_trip, run_db, seed_trip
 
 
 def _trip_payload(**overrides: object) -> dict:
@@ -94,21 +98,46 @@ def test_concurrent_flight_searches_have_separate_execution_runs(
 ) -> None:
     trip = client.post("/api/trips", json=_trip_payload()).json()
     search_url = f"/api/trips/{trip['id']}/flights/search"
-    barrier = Barrier(2)
+    started, release = Event(), Event()
     original_search = flight_search_spy.search_offers
 
     async def synchronized_search(*arguments, **keywords):
-        barrier.wait(timeout=5)
+        started.set()
+        assert await asyncio.to_thread(release.wait, 10), "flight search was never released"
         return await original_search(*arguments, **keywords)
 
     monkeypatch.setattr(flight_search_spy, "search_offers", synchronized_search)
     with ThreadPoolExecutor(max_workers=2) as executor:
-        responses = list(executor.map(lambda _: client.post(search_url), range(2)))
+        first = executor.submit(client.post, search_url)
+        try:
+            assert started.wait(10), "first flight search never started"
+            second = executor.submit(client.post, search_url)
+            deadline = monotonic() + 5
+            while not run_db(lambda session: session.scalar(text(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
+                "WHERE datname = current_database() AND cardinality(pg_blocking_pids(pid)) > 0)"
+            ))):
+                assert not second.done(), "second search bypassed the trip lock"
+                assert monotonic() < deadline, "second search never waited for the first transaction"
+                sleep(0.01)
+        finally:
+            release.set()
+        responses = [first.result(timeout=15), second.result(timeout=15)]
 
     assert [response.status_code for response in responses] == [200, 200]
+    assert flight_search_spy.calls == 1
+    offers = responses[0].json()["offers"]
+    assert offers
+    assert responses[1].json()["offers"] == offers
+    stored_offers = run_db(lambda session: get_flight_search_results(session, trip["id"]))
+    assert {offer.id for offer in stored_offers} == {offer["id"] for offer in offers}
     runs = client.get(f"/api/trips/{trip['id']}/execution").json()["agent_runs"]
     assert len(runs) == 2
-    assert all(run["status"] == "completed" for run in runs)
+    assert len({run["id"] for run in runs}) == 2
+    for run in runs:
+        assert run["status"] == "completed" and run["finished_at"] is not None
+        assert [step["name"] for step in run["steps"]] == ["search_flights"]
+        assert [event["name"] for event in run["events"]] == ["search_flights"]
 
 
 def test_execution_history_pages_owned_runs_with_matching_details(client) -> None:
