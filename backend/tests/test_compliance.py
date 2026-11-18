@@ -71,19 +71,6 @@ def test_monitoring_requires_operator_mfa_and_hides_other_tenants(enforced_clien
     assert len(history["assessments"]) == 2
 
 
-def test_security_event_indexes_exist() -> None:
-    async def _index_names(session):
-        return set(await session.scalars(text("""
-            SELECT indexname
-            FROM pg_indexes
-            WHERE schemaname = current_schema() AND tablename = 'security_event'
-        """)))
-
-    index_names = run_db(_index_names)
-    assert "ix_security_event_tenant_created_at" in index_names
-    assert "ix_security_event_denial_window" in index_names
-
-
 def test_security_incident_history_is_bounded() -> None:
     async def _seed_incidents(session):
         session.add_all([

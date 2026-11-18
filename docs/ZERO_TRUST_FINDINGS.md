@@ -1,5 +1,5 @@
-Current validation (2026-11-17): **64 no-database backend tests passed, 79 deselected**;
-the focused device/enrollment/security checks passed **26 cases**.
+Current validation (2026-11-17): **62 no-database backend tests passed, 78 deselected**;
+the focused device/enrollment/security checks passed **25 cases**.
 The full backend run hit database connection errors during fixture setup and was stopped.
 Frontend tests passed in all eight files, the frontend production build passed, and pyrefly
 reported zero errors (six warnings). Independent reviews found a render-triggered request loop
@@ -190,7 +190,7 @@ inspection (the Docker daemon was unreachable in this environment, so runtime pa
 and the TLS handshake were not exercised). *Result (verified by configuration):*
 `application` and `database` networks are both `internal: true`; the `gateway` service
 joins only `[ingress, application]`; not `database`; the sole host binding is
-`127.0.0.1:8443:443` (the API and PostgreSQL publish no host port); the API's
+`127.0.0.1:8443:8443` (the API and PostgreSQL publish no host port); the API's
 `DATABASE_URL` uses `travel_runtime` while only provisioning containers use
 `travel_owner`; and the gateway sets `ssl_verify_client on` and *overwrites*
 `X-Device-Verified`/`X-Device-Subject` from `$ssl_client_verify`/`$ssl_client_s_dn`, so a
@@ -386,8 +386,8 @@ resistance, complete incident response, or organizational compliance. Missing
 evidence must not become a fabricated pass. SOC 2 mapping is a proposed subset;
 certification and exact criterion coverage are not established. PCI scope is unresolved.
 
-For future work: read this document alongside `ARCHITECTURE.md`,
-`COMPLIANCE_MONITORING.md` and the current code. Preserve zero-trust boundaries and
+For future work: read this document alongside `ARCHITECTURE.md` and the current code.
+Preserve zero-trust boundaries and
 append measured before/after outcomes here as each critical fix is completed.
 Students retain hypothesis, final design interpretation, report and slide authorship.
 

@@ -21,6 +21,7 @@ services:
       SEARCHAPI_API_KEY: provisioning
       TAVILY_API_KEY: provisioning
       DATABASE_URL: postgresql+asyncpg://travel_owner:${OWNER_DATABASE_PASSWORD:?required}@postgres/travel_agent
+      PROVISIONING_DIRECTORY: /provisioning
     volumes:
       - ./.identity-provisioning:/provisioning
     command: [alembic, upgrade, head]

@@ -1,6 +1,6 @@
 """Slack interactivity callback for the booking-approval message. Verifies Slack's webhook
 signature before doing anything else, then approves or rejects the booking named by the
-clicked button. Never executes a booking here — see docs/DECISIONS.md for why.
+clicked button. Never executes a booking here.
 """
 
 import json

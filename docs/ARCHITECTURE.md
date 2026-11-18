@@ -143,8 +143,7 @@ database-owned.
 
 **Why this stack:** FastAPI + Postgres/SQLModel + Pydantic AI (with a Cerebras-hosted open-weight
 LLM) + React fit the application's relational data, transactional booking-state changes,
-tool-calling loop, and separate browser interface. See "Why this stack, as a whole" in
-[DECISIONS.md](DECISIONS.md) for the trade-offs.
+tool-calling loop, and separate browser interface.
 
 ## Capabilities → implementation
 
@@ -156,10 +155,9 @@ tool-calling loop, and separate browser interface. See "Why this stack, as a who
   invariant rather than relying only on provider ordering; the UI renders offers in the returned
   order. The two callers differ only in `persist`/`allow_cross_trip_cache`: the route
   persists and reaches across trips, the planner tool trusts only this trip's own recent search
-  and never writes offers (see "The agent has only two read-only tools" in `DECISIONS.md`).
+  and never writes offers.
   `POST /api/trips/{trip_id}/flights/search` is reachable on its own, independent of
-  `POST /api/trips/{trip_id}/plan`; see "Flight search is its own user-facing capability" in
-  `DECISIONS.md` for why.
+  `POST /api/trips/{trip_id}/plan`.
 - **Attributed itinerary, tailored to age/fitness:** `web_search` (Tavily) supplies activity
   research; `output_type=[ToolOutput(ItineraryOut),
   ToolOutput(ClarificationOut)]` (pinned to tool-call output rather than left on `auto`, since
@@ -181,8 +179,7 @@ tool-calling loop, and separate browser interface. See "Why this stack, as a who
 
 ## Architectural patterns
 
-Five patterns are used explicitly. This section maps each pattern to the code;
-[DECISIONS.md](DECISIONS.md) records the trade-offs.
+Five patterns are used explicitly. This section maps each pattern to the code.
 
 1. **Dependency Injection** (FastAPI `Depends`); DB sessions (`get_session`) and external clients
    (flight provider, booking-options fetcher) are injected into route handlers, never constructed
@@ -192,8 +189,7 @@ Five patterns are used explicitly. This section maps each pattern to the code;
 2. **Finite State Machine** (`app/state.py`); `ALLOWED_TRANSITIONS` is the single source of truth
    for booking state (`PENDING → CONFIRMED → EXECUTED`, +`CANCELLED`/`EXPIRED`); every transition
    is a guard clause (illegal move → 409) plus an append-only audit row in the same transaction.
-   See "HITL booking" below and "HITL booking is a REST state machine, not an agent tool" in
-   DECISIONS.md.
+   See "HITL booking" below.
 3. **Repository pattern** (`app/repositories/*`); all Postgres access lives behind
    `trips_repository.py`/`booking_repository.py`; route handlers call the repository and shape a
    response, never build a query or own a transaction boundary themselves.
@@ -273,7 +269,7 @@ through the bound context. The execution-recording module owns run creation and 
 `finish_planner_run` derives steps from captured message history and records usage on both
 success and handled failure paths. Flight search uses the same `finish_run` implementation for
 status, timing, and step persistence. The concurrency slot releases in a `finally`, outside
-the DBOS-wrapped call; see [DECISIONS.md](DECISIONS.md) for why that placement matters.
+the DBOS-wrapped call.
 `POST /api/trips/{trip_id}/flights/search` (outside the agent loop) still binds its own run through
 the lower-level `execution_context()` directly, since it isn't wrapped in a DBOS workflow.
 
@@ -285,8 +281,7 @@ the lower-level `execution_context()` directly, since it isn't wrapped in a DBOS
 and estimated cost. The response also retains the trip-wide event stream for LiveActivity; the
 execution panel renders events only inside their owning run. `GET /api/execution` is the same
 shape for a bounded page across the user's trips (`GlobalExecutionPanelOut`, default 20, maximum 100 runs, with a `next_before_run_id` cursor); it backs the "Agent execution
-history" tab, which is global rather than scoped to whichever trip is currently active (see
-"Trip history is a list endpoint plus a global execution feed" in `DECISIONS.md`). The tab pages by descending run ID and filters
+history" tab, which is global rather than scoped to whichever trip is currently active. The tab pages by descending run ID and filters
 the current page client-side by route text and run status; `GET /api/trips` (also newest-first,
 user-scoped) backs the sibling "Your trips" tab, filtered client-side by a date-range dropdown.
 
@@ -300,8 +295,7 @@ tables (`security_session`, `security_event`, `security_incident`, `compliance_a
 `app/models.py`. The execution and security-evidence tables are append-only where their records
 are evidence; Postgres triggers (`reject_audit_row_mutation()`) reject `UPDATE`/`DELETE` and
 `TRUNCATE` on those tables at the database level regardless of what application code attempts.
-The model remains deliberately relational, not a document store; see
-"PostgreSQL over a NoSQL store" in [DECISIONS.md](DECISIONS.md).
+The model remains deliberately relational, not a document store.
 
 ## HITL booking (`app/state.py`)
 
@@ -320,7 +314,7 @@ real airline reservation/purchase (no PNR, no payment). Those options render as 
 checkout buttons the traveler clicks through to complete the purchase on the carrier's own site,
 so no fare is held by this application; `BOOKING_TTL_MINUTES` is an internal price-freshness window, checked
 lazily on confirm/execute rather than by any sweeper. Completing a real purchase is out of scope
-for this project; see [DECISIONS.md](DECISIONS.md).
+for this project.
 
 ## Slack HITL connector (`app/adapters/slack_hitl.py`, `app/routes/slack.py`, `app/routes/connectors.py`)
 
@@ -338,8 +332,7 @@ Confirm/Reject Block Kit message via `notify_pending_approval`. Slack's callback
 compare), then resolves to the same `confirm_booking`/`reject_booking` repository calls as the
 in-app buttons. Under enforcement, the shared availability check rejects the callback and prevents
 notifications and enablement because Slack users are not mapped to application sessions, owners,
-roles, or MFA. See [DECISIONS.md](DECISIONS.md#custom-slack-hitl-adapter-over-chat-sdk-python)
-for the historical adapter decision. There is no supported runtime Slack setup.
+roles, or MFA. There is no supported runtime Slack setup.
 
 ## Agent Execution Panel
 
@@ -368,16 +361,12 @@ Two flows are wrapped as `@DBOS.workflow`s to support checkpointed crash recover
 no additional infrastructure. Because DBOS workflows must take only serializable arguments and
 may replay their body during crash recovery, both durable entry points rebuild their
 session/provider dependencies internally rather than receiving them injected, and neither
-mutates plain in-process state (locks, counters) from inside the workflow body; see
-[DECISIONS.md](DECISIONS.md) for the concurrency-limiter bug this constraint caused and how it
-was fixed.
+mutates plain in-process state (locks, counters) from inside the workflow body.
 
 Within the planner run, the three calls that spend real external quota are each wrapped in their
 own `@DBOS.step`; the Cerebras completion (`agent.model.request`), the flight search
 (`FlightProvider.search_offers`), and the activity search (`ActivityProvider.search`); so a
-crash-recovery replay reuses each call's recorded result instead of re-issuing it. See
-[DECISIONS.md](DECISIONS.md) for why these are wrapped as free functions rather than decorating
-the bound methods directly.
+crash-recovery replay reuses each call's recorded result instead of re-issuing it.
 
 ## Ownership of execution and admission
 

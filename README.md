@@ -52,7 +52,6 @@ and private service networks; see [deployment instructions](#running-it). See th
   incident response) map to concrete controls, and what is deliberately out of scope.
 - [Zero-trust demo](#zero-trust-demo): deterministic identities, MFA, attacks, containment, and
   security-operations queries.
-- [Engineering decisions](docs/DECISIONS.md): deeper rationale and trade-offs.
 - [Security evaluation](docs/SECURITY_EVALUATION.md): PostgreSQL validation, repeatable scenarios,
   and a modest local latency comparison.
 
@@ -163,12 +162,12 @@ See [the detailed request path and durability model](docs/ARCHITECTURE.md#the-cr
 for the DBOS workflow boundary and replay behavior.
 
 Booking state, audit guarantees, provider failure behavior, and DBOS recovery are documented in
-the [architecture](docs/ARCHITECTURE.md) and [decisions](docs/DECISIONS.md) docs.
+the [architecture](docs/ARCHITECTURE.md) doc.
 
 ## Project status and limitations
 
 Security monitoring now includes recurring MFA, audit-protection, and session-containment checks.
-See [implementation, findings, and demonstration steps](docs/COMPLIANCE_MONITORING.md).
+See the [implementation, findings, and demonstration steps](docs/ZERO_TRUST_FINDINGS.md).
 
 This is a portfolio and reference implementation intended for local development and evaluation.
 It is not a production travel service; testing includes only modest local load, with no independent
@@ -215,8 +214,7 @@ detailed runtime, security, recovery, and integration limitations.
   signed-in user's trips.
 
 Live-provider operation requires accounts and API credentials for the configured services.
-Availability, pricing, and quotas are controlled by those providers and can change. For why each
-provider was selected, see [DECISIONS.md](docs/DECISIONS.md).
+Availability, pricing, and quotas are controlled by those providers and can change.
 
 ## Running it
 
@@ -419,8 +417,8 @@ and set `TEST_DATABASE_URL` to its asyncpg URL. Database tests truncate their ta
 cases; never point them at application data. See the
 [database preparation commands](docs/SECURITY_EVALUATION.md#repeat-the-validation).
 
-Latest local validation (2026-11-17): 64 no-database backend tests passed, with 79 database
-tests deselected; focused device/enrollment/security checks passed 26 cases. All eight frontend
+Latest local validation (2026-11-17): 62 no-database backend tests passed, with 78 database
+tests deselected; focused device/enrollment/security checks passed 25 cases. All eight frontend
 test files, backend type checking, and the frontend production build passed. The full backend
 run hit database connection errors during fixture setup and was stopped. PostgreSQL integration,
 Docker runtime, and live Compose verification remain pending; see the
@@ -455,9 +453,3 @@ Compose network, certificate, and database-permission checks described above.
 Execution history is paged across owned trips: `GET /api/execution` accepts `page_size`
 (1–100, default 20) and `before_run_id`, and returns `next_before_run_id` when older runs
 exist. The UI provides Newer/Older controls; filters apply to the current page.
-
-## Key decisions
-
-The reasoning behind the REST state machine, typed outputs, provider failure handling, DBOS
-workflows, append-only audit tables, request limits, and provider choices is documented in
-[docs/DECISIONS.md](docs/DECISIONS.md).

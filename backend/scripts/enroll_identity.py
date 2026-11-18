@@ -12,9 +12,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.config import get_settings
 from app.repositories.credentials_repository import enroll_identity
 
-PROVISIONING_DIRECTORY = (
-    Path("/provisioning") if Path("/provisioning").is_dir()
-    else Path(__file__).resolve().parents[2] / ".identity-provisioning"
+PROVISIONING_DIRECTORY = Path(
+    os.environ.get("PROVISIONING_DIRECTORY")
+    or Path(__file__).resolve().parents[2] / ".identity-provisioning"
 )
 
 
