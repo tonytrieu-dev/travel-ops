@@ -20,22 +20,30 @@ security model, trust boundaries, and known limits.
 
 ## Zero-trust demo
 
-Follow [deployment setup](#running-it) first, including the private environment secrets.
-For the synthetic walkthrough, issue both devices before starting the gateway:
+With Docker Desktop running, the API keys and generated secrets filled in `.env`, and the
+demo certificates already imported, start and seed the app from the repository root:
 
 ```bash
-python3 deploy/issue-device.py device-a-traveler
-python3 deploy/issue-device.py device-a-operator
 docker compose -f compose.zero-trust.yml up --build -d
 docker compose -f compose.zero-trust.yml run --rm migrate python -m scripts.seed_security_demo
-cd backend
-uv sync
-baml generate
-uv run python -m scripts.security_demo
 ```
 
-The synthetic seed uses public demo credentials for a disposable local walkthrough. Do not reuse
-them. Login, MFA, and protected requests require the registered client certificate.
+Restart Chrome or Edge, open `https://localhost:8443`, and select the traveler certificate when
+prompted. Sign in with:
+
+| Field | Value |
+|---|---|
+| Email | `traveler@tenant-a.test` |
+| Password | `demo-password` |
+| Device ID | `device-a-traveler` |
+
+For MFA, add the demo setup key `JBSWY3DPEHPK3PXP` to an authenticator and enter its current
+six-digit code. The synthetic credentials and MFA key are public and only safe for this disposable
+local walkthrough.
+
+If `.env` or the certificates are not ready, follow the one-time [deployment setup](#running-it).
+The browser demo does not require a local `uv` install, BAML generation, or the Python security
+walkthrough script; those were previously mixed into this quick start.
 
 For the repeatable PostgreSQL demonstration, run the security tests in the [tests](#5-tests)
 section. They cover authorized booking, cross-tenant denial, tampered tokens, revocation, and
@@ -198,10 +206,10 @@ sh deploy/check-boundaries.sh <registered-device-id>
 
 The script checks gateway-to-API access, blocks gateway-to-database access, checks certificate
 admission, and verifies audit protections through the API's runtime database credentials.
-The configuration and local certificate issuance have been checked, and a restricted database
-login has passed the audit-protection checks and started DBOS in its own schema. Container
-builds, deployed network isolation, and the gateway TLS handshake remain unverified in the
-current development environment because Docker is unavailable there.
+The local boundary check passed on 2026-11-18: the containers built, the mutual-TLS gateway
+accepted an issued certificate and rejected an uncertified request, the gateway could not reach
+PostgreSQL, and the runtime database role could not mutate audit evidence. This validates the
+disposable local stack, not a production deployment.
 
 ### 5. Tests
 

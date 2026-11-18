@@ -58,19 +58,14 @@ def test_access_token_expiry_is_utc_on_a_non_utc_server(monkeypatch: pytest.Monk
     assert claims["expires_at"] == int(expires_at.replace(tzinfo=UTC).timestamp())
 
 
-def test_enforced_signing_secret_requires_32_bytes() -> None:
-    settings = {
-        "cerebras_api_key": "x",
-        "searchapi_api_key": "x",
-        "tavily_api_key": "x",
-        "database_url": "postgresql+asyncpg://localhost/travel_agent_test",
-        "zero_trust_enforced": True,
-    }
-    with pytest.raises(ValidationError, match="at least 32 bytes"):
-        Settings(**settings, zero_trust_signing_secret="x" * 31)
-
-
-def test_configured_gateway_secret_requires_32_bytes() -> None:
+@pytest.mark.parametrize(
+    "field_name,error_message",
+    [
+        ("zero_trust_signing_secret", "at least 32 bytes"),
+        ("device_gateway_secret", "DEVICE_GATEWAY_SECRET"),
+    ],
+)
+def test_security_secrets_require_32_bytes(field_name: str, error_message: str) -> None:
     settings = {
         "cerebras_api_key": "x",
         "searchapi_api_key": "x",
@@ -79,8 +74,9 @@ def test_configured_gateway_secret_requires_32_bytes() -> None:
         "zero_trust_enforced": True,
         "zero_trust_signing_secret": "x" * 32,
     }
-    with pytest.raises(ValidationError, match="DEVICE_GATEWAY_SECRET"):
-        Settings(**settings, device_gateway_secret="x" * 31)
+    settings[field_name] = "x" * 31
+    with pytest.raises(ValidationError, match=error_message):
+        Settings(**settings)
 
 
 def test_runtime_configuration_cannot_disable_security(monkeypatch: pytest.MonkeyPatch) -> None:

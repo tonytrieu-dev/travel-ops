@@ -60,9 +60,9 @@ internal-service headers. The loopback development database configuration does n
 deployment controls; see [Running it](../README.md#running-it).
 
 Certificates expire after seven days. Managed renewal and per-certificate revocation are absent;
-urgent certificate revocation requires CA replacement and reissuance. The configuration and
-local certificate issuance have been checked, but container builds, deployed network isolation,
-and the gateway TLS handshake remain unverified in the current environment.
+urgent certificate revocation requires CA replacement and reissuance. The local boundary check
+passed on 2026-11-18, including container builds, gateway certificate admission, gateway-to-database
+isolation, and runtime audit protections. This is local demo evidence, not production validation.
 
 [NIST SP 800-207](https://csrc.nist.gov/pubs/sp/800/207/final) treats authentication and
 authorization as explicit decisions and does not grant trust merely from network location or

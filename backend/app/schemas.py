@@ -4,6 +4,7 @@ import re
 from datetime import UTC, date, datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal
+from zoneinfo import ZoneInfo
 
 from pydantic import (
     BaseModel,
@@ -69,7 +70,7 @@ class ErrorCode(StrEnum):
 def validate_trip_dates(depart_date: str, return_date: str | None) -> None:
     """Shared by TripRequestCreate and the trip-update repository path, so a PATCH that only
     changes one of the two dates is checked against the same rule as trip creation."""
-    if date.fromisoformat(depart_date) < date.today():
+    if date.fromisoformat(depart_date) < datetime.now(ZoneInfo("America/Los_Angeles")).date():
         raise ValueError(f"depart_date {depart_date} is in the past.")
     if return_date is not None and date.fromisoformat(return_date) < date.fromisoformat(
         depart_date
