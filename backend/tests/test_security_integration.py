@@ -28,9 +28,7 @@ _SIGNING_SECRET = "integration-test-signing-secret-at-least-32-bytes"
 def enforced_client(client, monkeypatch: pytest.MonkeyPatch):
     """The shared TestClient, with zero-trust enforcement switched on for the request path."""
     settings = Settings(
-        cerebras_api_key="x",
         searchapi_api_key="x",
-        tavily_api_key="x",
         database_url=TEST_DATABASE_URL,
         zero_trust_enforced=True,
         zero_trust_signing_secret=_SIGNING_SECRET,

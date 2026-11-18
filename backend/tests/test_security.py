@@ -35,9 +35,7 @@ _SIGNING_SECRET = "unit-test-signing-secret-at-least-32-bytes"
 
 def _settings(*, enforced: bool) -> Settings:
     return Settings(
-        cerebras_api_key="x",
         searchapi_api_key="x",
-        tavily_api_key="x",
         database_url=TEST_DATABASE_URL,
         zero_trust_signing_secret=_SIGNING_SECRET,
     ).model_copy(update={"zero_trust_enforced": enforced})

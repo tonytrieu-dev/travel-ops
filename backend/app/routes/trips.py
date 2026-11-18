@@ -1,5 +1,5 @@
-"""Trip routes. Each handler stays thin: call the repository (which owns validation, caching,
-and itinerary persistence), then shape the result into the response model. Domain rejections
+"""Trip routes. Each handler stays thin: call the repository (which owns validation and caching),
+then shape the result into the response model. Domain rejections
 raise TripError, rendered as a ProblemDetail by the app-level handler in main.py.
 """
 
@@ -11,31 +11,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.adapters.flights_searchapi import derive_flight_legs, get_flight_provider
 from app.agent.execution_log import execution_context
 from app import config
-from app.config import (
-    LLM_INPUT_PRICE_PER_MILLION_TOKENS,
-    LLM_OUTPUT_PRICE_PER_MILLION_TOKENS,
-    MAX_CONTEXT_TOKENS,
-)
 from app.db import get_session
-from app.dbos_runtime import run_planner_durable
 from app.models import AgentRun, AgentRunStep, ExecutionEvent, TripRequest, User
 from app.rate_limit import enforce_request_rate_limit
 from app.repositories import trips_repository as repository
 from app.schemas import (
     AgentRunOut,
     AgentRunStepOut,
-    ClarificationOut,
     ExecutionEventOut,
     ExecutionPanelOut,
     FlightLegOut,
     FlightOfferOut,
     FlightSearchOut,
     GlobalExecutionPanelOut,
-    ItineraryOut,
-    PlanNeedsClarificationOut,
-    PlanOut,
-    PlanReadyOut,
-    PlanTooComplexOut,
     ProblemDetail,
     TripRequestCreate,
     TripRequestOut,
@@ -45,7 +33,6 @@ from app.schemas import (
 from app.services.flight_search import FlightSearchService, flight_provider_name
 from app.security_admission import admit_collection_route, admit_trip_route
 from app.security_segment import enforce_api_segment
-from app.request_context import correlation_id
 
 router = APIRouter(
     prefix="/api",
@@ -129,7 +116,7 @@ async def get_trip_snapshot(
     trip_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> TripSnapshotOut:
-    trip, offers, itinerary, is_stale = await repository.get_trip_snapshot(session, trip_id)
+    trip, offers, is_stale = await repository.get_trip_snapshot(session, trip_id)
     return TripSnapshotOut(
         trip=TripRequestOut.model_validate(trip),
         flight_search=FlightSearchOut(
@@ -137,9 +124,6 @@ async def get_trip_snapshot(
             is_stale=is_stale,
         )
         if offers
-        else None,
-        plan=PlanReadyOut(itinerary=ItineraryOut(days=itinerary.days))
-        if itinerary is not None
         else None,
     )
 
@@ -168,50 +152,16 @@ async def search_trip_flights(
     )
 
 
-@router.post(
-    "/trips/{trip_id}/plan",
-    response_model=PlanOut,
-    responses=_NOT_FOUND_OR_RATE_LIMITED,
-    dependencies=[
-        Depends(admit_trip_route("trip.plan")),
-        Depends(enforce_request_rate_limit),
-    ],
-)
-async def plan_trip(
-    trip_id: int,
-    session: AsyncSession = Depends(get_session),
-) -> PlanOut:
-    output = await repository.get_or_create_itinerary(
-        session,
-        trip_id,
-        lambda trip_id, prompt, fitness_level: run_planner_durable(
-            trip_id, prompt, fitness_level, correlation_id()
-        ),
-    )
-    if isinstance(output, PlanTooComplexOut):
-        return output
-    if isinstance(output, ClarificationOut):
-        return PlanNeedsClarificationOut(questions=output.questions)
-    return PlanReadyOut(itinerary=output)
-
-
 def _to_agent_run_out(
     agent_run: AgentRun,
     steps: list[AgentRunStep],
     events: list[ExecutionEvent],
 ) -> AgentRunOut:
-    estimated_cost_usd = (
-        agent_run.total_input_tokens * LLM_INPUT_PRICE_PER_MILLION_TOKENS
-        + agent_run.total_output_tokens * LLM_OUTPUT_PRICE_PER_MILLION_TOKENS
-    ) / 1_000_000
-    budget_utilization_pct = (
-        100 * (agent_run.total_input_tokens + agent_run.total_output_tokens) / MAX_CONTEXT_TOKENS
-    )
     agent_run_out = AgentRunOut.model_validate(agent_run)
     agent_run_out.steps = [AgentRunStepOut.model_validate(step) for step in steps]
     agent_run_out.events = [ExecutionEventOut.model_validate(event) for event in events]
-    agent_run_out.estimated_cost_usd = round(estimated_cost_usd, 6)
-    agent_run_out.budget_utilization_pct = round(budget_utilization_pct, 2)
+    agent_run_out.estimated_cost_usd = None
+    agent_run_out.budget_utilization_pct = None
     return agent_run_out
 
 

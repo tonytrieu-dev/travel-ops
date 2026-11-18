@@ -14,7 +14,6 @@ import { ConnectorsPanel } from "./components/ConnectorsPanel"
 import { CompliancePanel } from "./components/CompliancePanel"
 import { ExecutionPanel } from "./components/ExecutionPanel"
 import { FlightSearch } from "./components/FlightSearch"
-import { ItineraryPanel } from "./components/ItineraryPanel"
 import { LiveActivity } from "./components/LiveActivity"
 import { Questionnaire } from "./components/Questionnaire"
 import { useActiveTrip } from "./hooks/useActiveTrip"
@@ -88,7 +87,7 @@ export function LoginPanel({ onAuthenticated }: { onAuthenticated: () => void | 
 type TabKey = "trip" | "trips" | "execution" | "approvals" | "connectors" | "compliance"
 
 const TABS: { key: TabKey; label: string; roles: string[]; privileged?: boolean; icon: string }[] = [
-  { key: "trip", label: "Plan a trip", roles: ["traveler", "trip-planner", "admin"], icon: "M12 5v14m-7-7h14" },
+  { key: "trip", label: "Find a flight", roles: ["traveler", "trip-planner", "admin"], icon: "M12 5v14m-7-7h14" },
   { key: "trips", label: "Your trips", roles: ["traveler", "trip-planner", "admin"], icon: "M4 7h16v13H4zM9 7V4h6v3" },
   { key: "execution", label: "Agent execution history", roles: ["trip-planner", "admin"], icon: "M4 12h4l3-8 3 16 3-8h3" },
   { key: "approvals", label: "Approval history", roles: ["trip-planner", "admin"], icon: "M5 4h14v16H5zM8 12l3 3 5-6" },
@@ -125,15 +124,10 @@ function App() {
     flightSearchError,
     selectedOffer,
     setSelectedOffer,
-    planResult,
-    isPlanning,
-    planError,
     isRunActive,
     handleCreateTrip,
     handleSearchFlights,
     handleStartNewSearch,
-    handleRequestPlan,
-    handleAnswerClarification,
     handleSearchAgain,
     handleSelectTrip,
   } = useActiveTrip(isAuthenticated && canPlanTrips)
@@ -250,15 +244,6 @@ function App() {
                     />
                   )}
 
-                  <ItineraryPanel
-                    trip={trip}
-                    planResult={planResult}
-                    isLoading={isPlanning}
-                    errorMessage={planError}
-                    onRequestPlan={handleRequestPlan}
-                    onAnswerClarification={handleAnswerClarification}
-                  />
-
                   <LiveActivity tripId={trip.id} isRunActive={isRunActive} />
                 </>
               )}
@@ -284,7 +269,7 @@ function App() {
         </main>
 
         <footer className="mt-10 border-t border-slate-200 py-6 text-center text-xs text-slate-400">
-          <p>flights via Google Flights (SearchApi.io) · activity research via Tavily</p>
+          <p>flight search via SearchApi.io</p>
         </footer>
       </div>
     </div>

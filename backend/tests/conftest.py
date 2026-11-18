@@ -39,12 +39,11 @@ TEST_DATABASE_URL = _validate_test_database_url(
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 
 from app.adapters.flights_searchapi import FlightSearchOutcome, NormalizedFlightOffer
-from app.schemas import ClarificationOut, ItineraryDayOut, ItineraryOut
 from tests.db_helpers import run_db
 
 _ALL_TABLES = (
     "booking_transition, execution_event, agent_run_step, agent_run, hitl_booking_log, "
-    "itinerary, flight_search_result, trip_request, user_account, connector_setting, security_event, security_session, security_incident, compliance_assessment"
+    "flight_search_result, trip_request, user_account, connector_setting, security_event, security_session, security_incident, compliance_assessment"
 )
 
 
@@ -70,7 +69,6 @@ def _reset_rate_limit_state() -> None:
     from app import rate_limit
 
     rate_limit._request_timestamps.clear()
-    rate_limit._agent_runs_in_flight = 0
 
 
 @dataclass
@@ -118,7 +116,7 @@ class BookingOptionsFetchSpy:
         self, departure_id: str, arrival_id: str, outbound_date: str, return_date: str | None
     ) -> FlightSearchOutcome:
         # Booking tests never exercise this leg; present but unused, just enough to conform to
-        # the FlightProvider protocol (the durable planner workflow wraps it as a DBOS step
+        # the FlightProvider protocol (the durable booking workflow wraps it as a DBOS step
         # unconditionally, whether or not search_flights is ever called in a given test).
         return FlightSearchOutcome(offers=[], unavailable_reason=None)
 
@@ -174,31 +172,6 @@ class FlightSearchSpy:
         raise NotImplementedError("FlightSearchSpy only stands in for search_offers")
 
 
-@dataclass
-class PlannerRunSpy:
-    """Stands in for the planner runner so trip-planning tests never spend real LLM
-    quota, and counts calls so an idempotent /plan can assert the agent ran at most once."""
-
-    output: ItineraryOut | ClarificationOut = field(
-        default_factory=lambda: ItineraryOut(
-            days=[
-                ItineraryDayOut(
-                    day_number=1,
-                    summary="Explore",
-                    activities=[],
-                )
-            ]
-        )
-    )
-    calls: int = 0
-
-    async def __call__(
-        self, trip_id: int, prompt: str, trace_id: str | None = None, *providers: object
-    ) -> ItineraryOut | ClarificationOut:
-        self.calls += 1
-        return self.output
-
-
 @pytest.fixture
 def booking_options_spy() -> BookingOptionsFetchSpy:
     return BookingOptionsFetchSpy()
@@ -210,16 +183,10 @@ def flight_search_spy() -> FlightSearchSpy:
 
 
 @pytest.fixture
-def planner_spy() -> PlannerRunSpy:
-    return PlannerRunSpy()
-
-
-@pytest.fixture
 def client(
     request: pytest.FixtureRequest,
     booking_options_spy: BookingOptionsFetchSpy,
     flight_search_spy: FlightSearchSpy,
-    planner_spy: PlannerRunSpy,
     monkeypatch: pytest.MonkeyPatch,
 ):
     from starlette.testclient import TestClient
@@ -245,15 +212,11 @@ def client(
     app.dependency_overrides[get_session] = _override_get_session
     monkeypatch.setattr("app.dbos_runtime.get_flight_provider", lambda settings: booking_options_spy)
     monkeypatch.setattr("app.routes.trips.get_flight_provider", lambda settings: flight_search_spy)
-    if request.node.get_closest_marker("real_planner") is None:
-        monkeypatch.setattr("app.agent.execution.run_planner", planner_spy)
     # Bypass validation only in the legacy route harness; runtime settings reject this posture.
     from app import config
 
     unenforced = config.Settings(
-        cerebras_api_key="x",
         searchapi_api_key="x",
-        tavily_api_key="x",
         database_url=TEST_DATABASE_URL,
     )
     monkeypatch.setattr("app.config.get_settings", lambda: unenforced.model_copy(update={"zero_trust_enforced": False}))

@@ -24,7 +24,6 @@ from app.models import (
     FlightResultSource,
     FlightSearchResult,
     HITLBookingLog,
-    Itinerary,
     TripRequest,
     User,
     utcnow,
@@ -178,28 +177,6 @@ async def seed_flight_search_results(
     return [result.id]
 
 
-async def seed_itinerary(session: AsyncSession, trip_id: int) -> int:
-    days: list[dict[str, Any]] = [
-        {
-            "day_number": 1,
-            "summary": "Arrival",
-            "activities": [
-                {
-                    "name": "Check in",
-                    "description": "Settle into the hotel.",
-                    "intensity": "low",
-                    "source_url": "https://example.test/hotel",
-                }
-            ],
-        }
-    ]
-    itinerary = Itinerary(trip_request_id=trip_id, days=days)
-    session.add(itinerary)
-    await session.flush()
-    assert itinerary.id is not None
-    return itinerary.id
-
-
 async def seed_agent_run(
     session: AsyncSession,
     trip_id: int,
@@ -229,7 +206,7 @@ async def seed_agent_run(
             name="llama-3.3-70b-versatile",
             status="completed",
             duration_ms=1500,
-            output_summary="Here is your itinerary.",
+            output_summary="Flight search completed.",
             tokens=total_output_tokens,
         )
     )
@@ -273,12 +250,6 @@ async def get_flight_search_results(
         await session.scalars(
             select(FlightSearchResult).where(col(FlightSearchResult.trip_request_id) == trip_id)
         )
-    )
-
-
-async def get_itinerary(session: AsyncSession, trip_id: int) -> Itinerary | None:
-    return await session.scalar(
-        select(Itinerary).where(col(Itinerary.trip_request_id) == trip_id)
     )
 
 

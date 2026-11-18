@@ -26,9 +26,7 @@ def test_totp_matches_rfc_6238_sha1_vectors(timestamp: int, expected: str) -> No
 
 def _settings(*, enforced: bool) -> Settings:
     return Settings(
-        cerebras_api_key="x",
         searchapi_api_key="x",
-        tavily_api_key="x",
         database_url="postgresql+asyncpg://localhost/travel_agent_test",
         zero_trust_enforced=enforced,
         zero_trust_signing_secret="x" * 32,
@@ -67,9 +65,7 @@ def test_access_token_expiry_is_utc_on_a_non_utc_server(monkeypatch: pytest.Monk
 )
 def test_security_secrets_require_32_bytes(field_name: str, error_message: str) -> None:
     settings = {
-        "cerebras_api_key": "x",
         "searchapi_api_key": "x",
-        "tavily_api_key": "x",
         "database_url": "postgresql+asyncpg://localhost/travel_agent_test",
         "zero_trust_enforced": True,
         "zero_trust_signing_secret": "x" * 32,
@@ -84,6 +80,6 @@ def test_runtime_configuration_cannot_disable_security(monkeypatch: pytest.Monke
     with pytest.raises(ValidationError, match="cannot be disabled"):
         Settings(
             _env_file=None,
-            cerebras_api_key="x", searchapi_api_key="x", tavily_api_key="x",
+            searchapi_api_key="x",
             database_url="postgresql+asyncpg://localhost/travel_agent_test",
         )

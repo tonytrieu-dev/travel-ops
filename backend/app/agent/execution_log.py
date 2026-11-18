@@ -11,13 +11,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from pydantic_ai.messages import ModelMessage
-from pydantic_ai.usage import RunUsage
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
-from app.agent.observability import derive_steps
 from app.models import AgentRun, AgentRunStep, ExecutionEvent, ExecutionEventKind, TripRequest, utcnow
 from app.request_context import bind_correlation_id, correlation_id
 
@@ -78,7 +75,7 @@ def _bound_context(caller_name: str) -> _ExecutionContext:
 
 def current_trip(caller_name: str) -> tuple[AsyncSession, int]:
     """Exposed so a tool can query the trip's own data without threading session/trip_id
-    through PlannerDeps."""
+    through the execution context."""
     context = _bound_context(caller_name)
     return context.session, context.trip_request_id
 
@@ -95,7 +92,7 @@ async def record_event(
     context = _bound_context("record_event")
     async with context.lock:
         # FOR UPDATE on the trip row serializes seq allocation across concurrent runs (e.g. a
-        # double-submitted /plan) — a locally-cached counter would let two runs read the same
+        # double-submitted searches) — a locally-cached counter would let two runs read the same
         # starting point and hand out colliding seq values.
         await context.session.execute(
             select(TripRequest).where(col(TripRequest.id) == context.trip_request_id).with_for_update()
@@ -130,7 +127,7 @@ async def finish_run(
     steps: list[AgentRunStep] | None = None,
     total_ms: int | None = None,
     started_at: datetime | None = None,
-    usage: RunUsage | None = None,
+    usage: Any = None,
 ) -> None:
     context = _bound_context("finish_run")
     agent_run = context.agent_run
@@ -153,15 +150,3 @@ async def finish_run(
         step.agent_run_id = agent_run.id
         context.session.add(step)
     await context.session.commit()
-
-
-async def finish_planner_run(
-    message_history: list[ModelMessage], usage: RunUsage, *, status: str = "completed",
-) -> None:
-    started_at = message_history[0].timestamp if message_history else None
-    finished_at = message_history[-1].timestamp if message_history else None
-    total_ms = (
-        round((finished_at - started_at).total_seconds() * 1000)
-        if started_at is not None and finished_at is not None else 0
-    )
-    await finish_run(status, steps=derive_steps(message_history), total_ms=total_ms, usage=usage)

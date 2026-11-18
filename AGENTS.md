@@ -18,11 +18,8 @@ DI (`Depends`) · Finite State Machine (`app/state.py`) · Repository (`app/repo
 Strategy (`FlightProvider`: Live vs Recorded by `USE_LIVE_FLIGHT_API`) · Durable Execution
 (DBOS wraps booking `execute` and the agent run).
 
-## Travel-agent system prompt
+## Travel-agent system
 
-The planner's LLM boundary (system prompt, output schemas `ItineraryOut`/`ClarificationOut`/
-`ItineraryDayOut`/`ActivityOut`, and the Cerebras client) is defined once in
-`backend/baml_src/travel_planner.baml` and generated into `baml_sdk`. Edit the prompt there, then
-run `baml generate` from `backend`. `app/agent/prompts.py` reads the prompt text from that BAML
-source; `app/schemas.py` re-exports the generated output types. The pydantic-ai agent in
-`app/agent/planner.py` still owns the tool loop and the stateful safety validators.
+TravelOps is deterministic: flight search uses the configured live or recorded provider, and
+booking execution remains behind the human approval and security boundaries. There is no LLM,
+planner, research adapter, or generated BAML boundary to edit.

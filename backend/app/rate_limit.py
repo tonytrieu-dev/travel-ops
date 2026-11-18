@@ -1,22 +1,15 @@
-"""Rate limiting for the two quota-spending routes (/plan, /flights/search): a per-client request
-cap, and a global concurrency cap on real LLM calls specifically.
-"""
+"""Rate limiting for quota-spending routes."""
 
-import asyncio
 import time
 
 from fastapi import Request
 
 from app.config import (
-    MAX_CONCURRENT_AGENT_RUNS,
     RATE_LIMIT_MAX_REQUESTS,
     RATE_LIMIT_WINDOW_SECONDS,
 )
 from app.security_device import verified_device_id
 from app.schemas import ErrorCode, LoginRequest
-
-_agent_run_lock = asyncio.Lock()
-_agent_runs_in_flight = 0
 
 _request_timestamps: dict[str, list[float]] = {}
 
@@ -70,29 +63,3 @@ async def enforce_login_rate_limit(body: LoginRequest, request: Request) -> None
     client_key = _client_key(request)
     _enforce_rate_limit(f"login-client:{client_key}")
     _enforce_rate_limit(f"login-account:{body.email.strip().casefold()}")
-
-
-async def acquire_agent_run_slot() -> None:
-    """Non-blocking: an already-full concurrency cap rejects immediately (429) instead of
-    queuing the request behind an indefinite wait for a real LLM call.
-
-    A plain lock-guarded counter, not asyncio.Semaphore: ``asyncio.wait_for(sem.acquire(),
-    timeout=0)`` is a known asyncio footgun — the zero-timeout callback can fire before the
-    acquire coroutine gets a chance to run at all, spuriously rejecting even an uncontended
-    semaphore (confirmed empirically: it failed on the very first call every time).
-    """
-    global _agent_runs_in_flight
-    async with _agent_run_lock:
-        if _agent_runs_in_flight >= MAX_CONCURRENT_AGENT_RUNS:
-            raise RateLimitError(
-                ErrorCode.RATE_LIMIT_EXCEEDED,
-                f"Too many concurrent planning runs (max {MAX_CONCURRENT_AGENT_RUNS}); "
-                "retry shortly.",
-                retry_after_seconds=5,
-            )
-        _agent_runs_in_flight += 1
-
-
-def release_agent_run_slot() -> None:
-    global _agent_runs_in_flight
-    _agent_runs_in_flight = max(0, _agent_runs_in_flight - 1)

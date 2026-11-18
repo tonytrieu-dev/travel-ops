@@ -1,8 +1,5 @@
-"""FlightSearchService: the one implementation of flight-offer search, caching, filtering,
-persistence, and ordering behind both the /flights/search route and the planner's
-search_flights tool. The two callers differ only in persist/allow_cross_trip_cache — the
-route persists and reaches across trips, the planner tool trusts only this trip's own
-recent search and never writes offers (see planner.search_flights for why)."""
+"""FlightSearchService: the implementation of flight-offer search, caching, filtering,
+persistence, and ordering behind the /flights/search route."""
 
 from __future__ import annotations
 

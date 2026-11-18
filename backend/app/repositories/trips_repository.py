@@ -1,11 +1,10 @@
-"""Trip lifecycle: create/update a trip, search flights against it, and generate its itinerary.
+"""Trip lifecycle: create/update a trip and search flights against it.
 
 Mirrors booking_repository's shape (a domain error carrying code/status/detail, thin functions
 taking an already-open session) so the two repositories read the same way.
 """
 
 from collections import defaultdict
-from collections.abc import Awaitable, Callable
 from datetime import timedelta
 
 from sqlalchemy import text
@@ -17,27 +16,18 @@ from app.models import (
     AgentRun,
     AgentRunStep,
     ExecutionEvent,
-    FitnessLevel,
     FlightSearchResult,
     HITLBookingLog,
-    Itinerary,
     TripRequest,
     TripStatus,
     utcnow,
 )
 from app.schemas import (
-    ClarificationOut,
     ErrorCode,
-    ItineraryOut,
-    PlannerOutput,
-    PlanTooComplexOut,
     TripRequestCreate,
     TripRequestUpdate,
     validate_trip_dates,
 )
-
-PlannerRunner = Callable[[int, str, FitnessLevel], Awaitable[PlannerOutput]]
-
 
 class TripError(Exception):
     """A domain rejection carrying the client-facing code, HTTP status, and root-cause detail."""
@@ -77,25 +67,17 @@ async def list_trips(session: AsyncSession, user_id: int) -> list[TripRequest]:
     )
 
 
-# Changing any of these invalidates a trip's flight search and itinerary: the stored offers were
-# priced for the old route/dates, and the itinerary was researched for the old destination.
+# Route/date changes invalidate cached flight offers.
 _CRITERIA_FIELDS = ("origin", "destination", "destination_airport", "depart_date", "return_date")
-_ITINERARY_CRITERIA_FIELDS = (*_CRITERIA_FIELDS, "age", "fitness_level")
 
 
 async def _invalidate_trip_derived_data(session: AsyncSession, trip_id: int) -> None:
-    """Drop cached flight offers and any generated itinerary so a later /flights/search or /plan
-    can't hand back data computed for the trip's previous criteria."""
+    """Drop cached flight offers so a later search can't return old criteria."""
     stale_flight_results = await session.scalars(
         select(FlightSearchResult).where(col(FlightSearchResult.trip_request_id) == trip_id)
     )
     for flight_result in stale_flight_results:
         await session.delete(flight_result)
-    stale_itinerary = await session.scalar(
-        select(Itinerary).where(col(Itinerary.trip_request_id) == trip_id)
-    )
-    if stale_itinerary is not None:
-        await session.delete(stale_itinerary)
 
 
 async def update_trip(session: AsyncSession, trip_id: int, data: TripRequestUpdate) -> TripRequest:
@@ -106,7 +88,7 @@ async def update_trip(session: AsyncSession, trip_id: int, data: TripRequestUpda
     if trip is None:
         raise TripError(ErrorCode.TRIP_NOT_FOUND, 404, f"No trip {trip_id}.")
 
-    criteria_before = {field_name: getattr(trip, field_name) for field_name in _ITINERARY_CRITERIA_FIELDS}
+    criteria_before = {field_name: getattr(trip, field_name) for field_name in _CRITERIA_FIELDS}
     patch = data.model_dump(exclude_unset=True)
     route_changed = any(
         field_name in patch and patch[field_name] != criteria_before[field_name]
@@ -134,34 +116,11 @@ async def update_trip(session: AsyncSession, trip_id: int, data: TripRequestUpda
     criteria_changed = any(
         getattr(trip, field_name) != criteria_before[field_name] for field_name in _CRITERIA_FIELDS
     )
-    await _invalidate_derived_data_after_edit(session, trip, trip_id, criteria_before, criteria_changed)
-    await session.commit()
-    return trip
-
-
-async def _invalidate_derived_data_after_edit(
-    session: AsyncSession,
-    trip: TripRequest,
-    trip_id: int,
-    criteria_before: dict[str, object],
-    criteria_changed: bool,
-) -> None:
-    """A route/date change invalidates flights and the itinerary; a lesser itinerary-criteria
-    change (e.g. fitness) only invalidates the itinerary."""
     if criteria_changed:
         await _invalidate_trip_derived_data(session, trip_id)
         trip.status = TripStatus.CREATED
-        return
-    itinerary_criteria_changed = any(
-        getattr(trip, field_name) != criteria_before[field_name]
-        for field_name in _ITINERARY_CRITERIA_FIELDS
-    )
-    if not itinerary_criteria_changed:
-        return
-    itinerary = await session.scalar(select(Itinerary).where(col(Itinerary.trip_request_id) == trip_id))
-    if itinerary is not None:
-        await session.delete(itinerary)
-    trip.status = TripStatus.CREATED
+    await session.commit()
+    return trip
 
 
 async def _trip_has_booking(session: AsyncSession, trip_id: int) -> bool:
@@ -182,7 +141,7 @@ def cheapest_first(offers: list[FlightSearchResult]) -> list[FlightSearchResult]
 
 async def get_trip_snapshot(
     session: AsyncSession, trip_id: int
-) -> tuple[TripRequest, list[FlightSearchResult], Itinerary | None, bool]:
+) -> tuple[TripRequest, list[FlightSearchResult], bool]:
     trip = await get_trip(session, trip_id)
     batch_started_at = await session.scalar(
         select(FlightSearchResult.created_at)
@@ -205,93 +164,12 @@ async def get_trip_snapshot(
         if batch_started_at is not None
         else []
     )
-    itinerary = await session.scalar(
-        select(Itinerary).where(col(Itinerary.trip_request_id) == trip_id)
-    )
     is_stale = (
         batch_started_at < utcnow() - timedelta(minutes=FLIGHT_CACHE_TTL_MINUTES)
         if batch_started_at is not None
         else False
     )
-    return trip, cheapest_first(offers), itinerary, is_stale
-
-
-def _build_planner_prompt(trip: TripRequest) -> str:
-    parts = [
-        f"Plan a trip from {trip.origin} to {trip.destination} (airport {trip.destination_airport}), "
-        f"departing {trip.depart_date}"
-        + (f", returning {trip.return_date}." if trip.return_date else " (one-way).")
-    ]
-    parts.append(f"Traveler age: {trip.age}.")
-    parts.append(f"Fitness level: {trip.fitness_level.value}.")
-    return " ".join(parts)
-
-
-async def get_or_create_itinerary(
-    session: AsyncSession, trip_id: int, run_planner: PlannerRunner
-) -> PlannerOutput:
-    trip = await session.get(TripRequest, trip_id)
-    if trip is None:
-        raise TripError(ErrorCode.TRIP_NOT_FOUND, 404, f"No trip {trip_id}.")
-
-    # Serialize planning per trip: a concurrent /plan waits here, then finds the itinerary the
-    # first run persisted below and skips a second LLM run. Advisory (not a trip-row lock) because
-    # record_event locks the trip row per step and would deadlock against a held row lock.
-    await session.execute(text("SELECT pg_advisory_xact_lock(:trip_id)"), {"trip_id": trip_id})
-
-    # The request may have waited behind another planner while its initial ORM object stayed
-    # cached. Build the prompt from the state protected by the lock.
-    trip = await session.scalar(
-        select(TripRequest)
-        .where(col(TripRequest.id) == trip_id)
-        .execution_options(populate_existing=True)
-    )
-    assert trip is not None
-
-    existing = await session.scalar(
-        select(Itinerary).where(col(Itinerary.trip_request_id) == trip_id)
-    )
-    if existing is not None:
-        return ItineraryOut(days=existing.days)
-
-    output = await run_planner(trip_id, _build_planner_prompt(trip), trip.fitness_level)
-    if isinstance(output, ClarificationOut | PlanTooComplexOut):
-        return output
-
-    # run_planner persists the itinerary inside its durable workflow (so a crash can't lose it) and
-    # skips persistence if the trip's criteria changed mid-run; an absent row means the plan is now
-    # obsolete. The advisory lock is still held, so the re-read serializes against a concurrent plan.
-    persisted = await session.scalar(
-        select(Itinerary)
-        .where(col(Itinerary.trip_request_id) == trip_id)
-        .execution_options(populate_existing=True)
-    )
-    if persisted is None:
-        raise TripError(
-            ErrorCode.INVALID_TRANSITION,
-            409,
-            "The trip changed while it was being planned; plan it again for the new details.",
-        )
-    return ItineraryOut(days=persisted.days)
-
-
-async def persist_itinerary_if_current(
-    session: AsyncSession, trip_id: int, planned_prompt: str, output: ItineraryOut
-) -> bool:
-    """Persist a freshly planned itinerary unless the trip's criteria changed since planning began.
-    Idempotent: a replayed durable workflow re-persisting the same result is a no-op."""
-    trip = await session.scalar(
-        select(TripRequest).where(col(TripRequest.id) == trip_id)
-        .with_for_update().execution_options(populate_existing=True)
-    )
-    if trip is None or _build_planner_prompt(trip) != planned_prompt:
-        return False
-    if await session.scalar(select(Itinerary).where(col(Itinerary.trip_request_id) == trip_id)):
-        return True
-    session.add(Itinerary(trip_request_id=trip_id, days=[day.model_dump() for day in output.days]))
-    trip.status = TripStatus.ITINERARY_READY
-    await session.commit()
-    return True
+    return trip, cheapest_first(offers), is_stale
 
 
 async def _execution_runs_for_trips(

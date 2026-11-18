@@ -242,7 +242,7 @@ export function ExecutionPanel({ trips, isRunActive }: ExecutionPanelProps) {
         <p className="rounded-xl border border-dashed border-slate-300 bg-white p-6 text-sm text-slate-500">
           {isFiltered
             ? "No runs match this filter."
-            : "No activity yet. Search for flights or generate an itinerary to see execution history."}
+            : "No activity yet. Search for flights to see execution history."}
         </p>
       )}
 

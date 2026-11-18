@@ -1,13 +1,12 @@
 import { useRequestLifetime } from "./useRequestLifetime"
 import { useCallback, useEffect, useState } from "react"
 import {
-  createTrip, getTripSnapshot, listTrips, planTrip, searchTripFlights, updateTrip,
+  createTrip, getTripSnapshot, listTrips, searchTripFlights,
   extractErrorMessage,
 } from "../api/client"
 import type {
-  FlightOfferOut, FlightSearchOut, PlanOut, TripRequestCreate, TripRequestOut,
+  FlightOfferOut, FlightSearchOut, TripRequestCreate, TripRequestOut,
 } from "../api/types"
-import type { ClarificationAnswers } from "../components/ItineraryPanel"
 
 const ACTIVE_TRIP_ID_STORAGE_KEY = "travel-agent.activeTripId"
 
@@ -25,27 +24,20 @@ export function useActiveTrip(isAuthenticated: boolean | null) {
   const [flightSearchError, setFlightSearchError] = useState<string | null>(null)
   const [selectedOffer, setSelectedOffer] = useState<FlightOfferOut | null>(null)
 
-  const [planResult, setPlanResult] = useState<PlanOut | null>(null)
-  const [isPlanning, setIsPlanning] = useState(false)
-  const [planError, setPlanError] = useState<string | null>(null)
-
-  const isRunActive = isSearchingFlights || isPlanning
+  const isRunActive = isSearchingFlights
 
   const { captureRequest, invalidateRequests } = useRequestLifetime()
   const { captureRequest: captureFlightRequest, invalidateRequests: invalidateFlightRequests } = useRequestLifetime()
-  const { captureRequest: capturePlanRequest, invalidateRequests: invalidatePlanRequests } = useRequestLifetime()
   const { captureRequest: captureTripListRequest } = useRequestLifetime()
   const beginSelection = useCallback(() => {
     invalidateRequests()
     invalidateFlightRequests()
-    invalidatePlanRequests()
     setIsCreatingTrip(false)
     setIsRestoringTrip(false)
     setRestoreTripError(null)
-    setIsPlanning(false)
     setIsSearchingFlights(false)
     return captureRequest()
-  }, [captureRequest, invalidateRequests, invalidateFlightRequests, invalidatePlanRequests])
+  }, [captureRequest, invalidateRequests, invalidateFlightRequests])
 
   const restoreTrip = useCallback((tripId: number) => {
     const request = beginSelection()
@@ -55,7 +47,6 @@ export function useActiveTrip(isAuthenticated: boolean | null) {
       if (!request.isCurrent()) return
       setTrip(snapshot.trip)
       setFlightSearchResult(snapshot.flight_search)
-      setPlanResult(snapshot.plan)
       localStorage.setItem(ACTIVE_TRIP_ID_STORAGE_KEY, String(tripId))
     }).catch((error) => {
       if (!request.isCurrent()) return
@@ -132,49 +123,7 @@ export function useActiveTrip(isAuthenticated: boolean | null) {
     localStorage.removeItem(ACTIVE_TRIP_ID_STORAGE_KEY)
     setTrip(null)
     clearFlightAndBookingState()
-    setPlanResult(null)
-    setPlanError(null)
   }
-
-  const handlePlan = async (answers?: ClarificationAnswers) => {
-    if (!trip || isRestoringTrip) return
-    if (answers) {
-      invalidateFlightRequests()
-      // The invalidated search won't reset this when it resolves, so clear it here.
-      setIsSearchingFlights(false)
-      clearFlightAndBookingState()
-    }
-    const request = capturePlanRequest()
-    setIsPlanning(true)
-    setPlanError(null)
-    try {
-      if (answers) {
-        const updatedTrip = await updateTrip(trip.id, answers, request.signal)
-        if (!request.isCurrent()) return
-        invalidateFlightRequests()
-        setIsSearchingFlights(false)
-        clearFlightAndBookingState()
-        setTrip(updatedTrip)
-        localStorage.setItem(ACTIVE_TRIP_ID_STORAGE_KEY, String(updatedTrip.id))
-      }
-      const planOutcome = await planTrip(trip.id, request.signal)
-      if (!request.isCurrent()) return
-      setPlanResult(planOutcome)
-      if (planOutcome.status === "needs_clarification" || planOutcome.status === "too_complex") {
-        invalidateFlightRequests()
-        setIsSearchingFlights(false)
-        clearFlightAndBookingState()
-      }
-    } catch (error) {
-      if (!request.isCurrent()) return
-      setPlanError(extractErrorMessage(error))
-    } finally {
-      if (request.isCurrent()) setIsPlanning(false)
-    }
-  }
-
-  const handleRequestPlan = () => handlePlan()
-  const handleAnswerClarification = (answers: ClarificationAnswers) => handlePlan(answers)
 
   const handleSearchAgain = () => {
     setSelectedOffer(null)
@@ -183,14 +132,9 @@ export function useActiveTrip(isAuthenticated: boolean | null) {
   const handleSelectTrip = (tripId: number) => {
     if (trip?.id === tripId) return
     clearFlightAndBookingState()
-    setPlanResult(null)
-    setPlanError(null)
     restoreTrip(tripId)
   }
 
-  // When a re-plan comes back needing clarification, the trip has effectively changed. Drop any
-  // flight results, selection, and (via BookingModule's remount key) booking state so the UI never
-  // shows offers or a booking tied to the now-stale trip.
   const clearFlightAndBookingState = () => {
     setFlightSearchResult(null)
     setSelectedOffer(null)
@@ -209,15 +153,10 @@ export function useActiveTrip(isAuthenticated: boolean | null) {
     flightSearchError,
     selectedOffer,
     setSelectedOffer,
-    planResult,
-    isPlanning,
-    planError,
     isRunActive,
     handleCreateTrip,
     handleSearchFlights,
     handleStartNewSearch,
-    handleRequestPlan,
-    handleAnswerClarification,
     handleSearchAgain,
     handleSelectTrip,
   }

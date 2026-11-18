@@ -17,9 +17,7 @@ services:
   migrate:
     build: ./backend
     environment: &provisioning_environment
-      CEREBRAS_API_KEY: provisioning
       SEARCHAPI_API_KEY: provisioning
-      TAVILY_API_KEY: provisioning
       DATABASE_URL: postgresql+asyncpg://travel_owner:${OWNER_DATABASE_PASSWORD:?required}@postgres/travel_agent
     command: [alembic, upgrade, head]
     networks: [database]
@@ -57,9 +55,7 @@ services:
   api:
     build: ./backend
     environment:
-      CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:?required}
       SEARCHAPI_API_KEY: ${SEARCHAPI_API_KEY:?required}
-      TAVILY_API_KEY: ${TAVILY_API_KEY:?required}
       ZERO_TRUST_SIGNING_SECRET: ${ZERO_TRUST_SIGNING_SECRET:?required}
       DATABASE_URL: postgresql+asyncpg://travel_runtime:${RUNTIME_DATABASE_PASSWORD:?required}@postgres/travel_agent
       FRONTEND_ORIGIN: https://localhost:8443

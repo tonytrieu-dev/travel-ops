@@ -16,21 +16,20 @@ from sqlmodel import Field, SQLModel
 from app.state import BookingState
 
 
-def utcnow() -> datetime:
-    # Naive UTC: the columns are TIMESTAMP WITHOUT TIME ZONE, so an aware datetime fails to insert.
-    return datetime.now(UTC).replace(tzinfo=None)
-
-
 class FitnessLevel(StrEnum):
     LOW = "low"
     MODERATE = "moderate"
     HIGH = "high"
 
 
+def utcnow() -> datetime:
+    # Naive UTC: the columns are TIMESTAMP WITHOUT TIME ZONE, so an aware datetime fails to insert.
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
 class TripStatus(StrEnum):
     CREATED = "created"
     FLIGHTS_SEARCHED = "flights_searched"
-    ITINERARY_READY = "itinerary_ready"
 
 
 class FlightResultSource(StrEnum):
@@ -185,18 +184,6 @@ class FlightSearchResult(SQLModel, table=True):
     booking_token: str
     raw_offer: dict[str, Any] = Field(sa_column=Column(JSON))  # the real SearchApi offer payload
     source: FlightResultSource = Field(default=FlightResultSource.LIVE)
-    created_at: datetime = Field(default_factory=utcnow)
-
-
-class Itinerary(SQLModel, table=True):
-    __tablename__ = "itinerary"
-    # One itinerary per trip. This blocks a duplicate row, not a second LLM run — planning is
-    # serialized by an advisory lock in get_or_create_itinerary.
-    __table_args__ = (UniqueConstraint("trip_request_id", name="uq_itinerary_trip_request"),)
-
-    id: int | None = Field(default=None, primary_key=True)
-    trip_request_id: int = Field(foreign_key="trip_request.id", index=True)
-    days: list[dict[str, Any]] = Field(sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=utcnow)
 
 

@@ -25,7 +25,7 @@ export interface ComplianceMonitoringOut {
   assessments: ComplianceAssessmentOut[]
 }
 
-export type TripStatus = "created" | "flights_searched" | "itinerary_ready"
+export type TripStatus = "created" | "flights_searched"
 
 export type BookingState =
   | "PENDING_USER_CONFIRMATION"
@@ -115,45 +115,10 @@ export interface FlightSearchOut {
   is_stale: boolean
 }
 
-export interface ActivityOut {
-  name: string
-  description: string
-  intensity: "low" | "moderate" | "high"
-  source_url: string
-}
-
-export interface ItineraryDayOut {
-  day_number: number
-  summary: string
-  activities: ActivityOut[]
-}
-
-export interface ItineraryOut {
-  days: ItineraryDayOut[]
-}
-
-export interface PlanReadyOut {
-  status: "ready"
-  itinerary: ItineraryOut
-}
-
 export interface TripSnapshotOut {
   trip: TripRequestOut
   flight_search: FlightSearchOut | null
-  plan: PlanReadyOut | null
 }
-
-export interface PlanNeedsClarificationOut {
-  status: "needs_clarification"
-  questions: string[]
-}
-
-export interface PlanTooComplexOut {
-  status: "too_complex"
-  reason: string
-}
-
-export type PlanOut = PlanReadyOut | PlanNeedsClarificationOut | PlanTooComplexOut
 
 export type AgentStepKind = "model" | "tool" | "output"
 

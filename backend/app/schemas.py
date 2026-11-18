@@ -19,13 +19,6 @@ from pydantic import (
 from app.models import AgentStepKind, ExecutionEventKind, FitnessLevel, TripStatus
 from app.state import BookingState
 
-# The planner's LLM-output schema is defined once in BAML (baml_src/travel_planner.baml) and
-# generated into baml_sdk. Re-exported here so the API/response layer keeps one import site.
-from baml_sdk import ActivityOut as ActivityOut
-from baml_sdk import ClarificationOut as ClarificationOut
-from baml_sdk import ItineraryDayOut as ItineraryDayOut
-from baml_sdk import ItineraryOut as ItineraryOut
-
 # Server timestamps are stored naive-UTC; serialize them with a +00:00 offset so a client doesn't
 # misread them as local time (which skewed the booking countdown by the viewer's UTC offset).
 UtcDatetime = Annotated[
@@ -259,39 +252,9 @@ class FlightSearchOut(BaseModel):
     is_stale: bool = False
 
 
-class PlanReadyOut(BaseModel):
-    status: Literal["ready"] = "ready"
-    itinerary: ItineraryOut
-
-
 class TripSnapshotOut(BaseModel):
     trip: TripRequestOut
     flight_search: FlightSearchOut | None = None
-    plan: PlanReadyOut | None = None
-
-
-class PlanNeedsClarificationOut(BaseModel):
-    status: Literal["needs_clarification"] = "needs_clarification"
-    questions: list[str]
-
-
-class PlanTooComplexOut(BaseModel):
-    """The run ran out of token budget before producing an itinerary. Distinct from
-    PlanNeedsClarificationOut: no amount of extra detail from the user fixes this in the same
-    pass — the honest fix is a shorter/simpler trip, not a form to fill out and resubmit."""
-
-    status: Literal["too_complex"] = "too_complex"
-    reason: str
-
-
-PlanOut = Annotated[
-    PlanReadyOut | PlanNeedsClarificationOut | PlanTooComplexOut,
-    Field(discriminator="status"),
-]
-
-# What a planner run can return: the itinerary, a question, or an honest "too big for one pass".
-# Threaded unchanged through dbos_runtime → trips_repository → the /plan route.
-PlannerOutput = ItineraryOut | ClarificationOut | PlanTooComplexOut
 
 
 class AgentRunStepOut(BaseModel):

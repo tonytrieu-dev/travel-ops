@@ -11,7 +11,6 @@ interface YourTripsPanelProps {
 const STATUS_LABELS: Record<TripStatus, string> = {
   created: "Created",
   flights_searched: "Flights searched",
-  itinerary_ready: "Itinerary ready",
 }
 
 type DateRangeFilter = "30d" | "3m" | "6m" | "1y" | "all"

@@ -170,9 +170,9 @@ export function Questionnaire({ onSubmit, isSubmitting, errorMessage }: Question
 
       <div className="space-y-3 border-t border-slate-200 pt-5">
         <div>
-          <h3 className="text-sm font-semibold text-slate-900">Itinerary preferences</h3>
+          <h3 className="text-sm font-semibold text-slate-900">Traveler details</h3>
           <p className="mt-1 text-xs text-slate-500">
-            Age and fitness level tailor which activities show up in your itinerary.
+            Age and fitness level are retained with the trip for traveler context.
           </p>
         </div>
 

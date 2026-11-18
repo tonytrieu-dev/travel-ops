@@ -5,30 +5,14 @@ Every tunable the agent and adapters rely on lives here as a named constant — 
 numbers scattered through the codebase.
 """
 
-import re
 import secrets
 from functools import lru_cache
 from pathlib import Path
 
-from baml_sdk import get_baml_source_files
 from pydantic import Field, SecretStr, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-def load_planner_client() -> tuple[str, str, str]:
-    source = get_baml_source_files()["travel_planner.baml"]
-    match = re.search(
-        r'client Cerebras = openai\.GenericClient\.new\(\s*'
-        r'model\s*=\s*"([^"]+)",\s*base_url\s*=\s*"([^"]+)",\s*'
-        r'api_key\s*=\s*env\.([A-Z_][A-Z_0-9]*),\s*\);',
-        source,
-    )
-    if match is None:
-        raise RuntimeError("Unsupported BAML Cerebras client definition; update the runtime loader")
-    return match[1], match[2], match[3]
-
-
-CEREBRAS_MODEL, CEREBRAS_BASE_URL, CEREBRAS_API_KEY_ENVIRONMENT = load_planner_client()
 SEARCHAPI_BASE_URL = "https://www.searchapi.io/api/v1/search"
 SEARCHAPI_TIMEOUT_SECONDS = 60.0
 
@@ -36,38 +20,6 @@ SLACK_API_TIMEOUT_SECONDS = 10.0
 
 # RecordedProvider replays real-captured payloads from here; never hand-fabricated.
 FLIGHT_CASSETTE_DIR = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "recorded" / "flights"
-
-# Agent guardrails: MAX_TOOL_STEPS/MAX_REQUESTS_PER_RUN bound the ReAct loop's iteration count.
-# MAX_CONTEXT_TOKENS matches gpt-oss-120b's real 30_000 tokens/minute limit on Cerebras — don't
-# raise it, that just trades a clean UsageLimitExceeded (handled gracefully in dbos_runtime.py)
-# for a raw 429 mid-run. If runs legitimately hit it, trim tool-result verbosity instead.
-MAX_TOOL_STEPS = 8
-MAX_CONTEXT_TOKENS = 30_000
-MAX_REQUESTS_PER_RUN = MAX_TOOL_STEPS + 3
-
-# pydantic-ai's default is 1 retry, too little room for the model to self-correct.
-MAX_OUTPUT_RETRIES = 3
-
-# 400 chars x 5 results/call still overfilled the provider budget after 4 web_search calls in
-# one run (redundant queries the prompt now forbids, e.g. re-searching flight info by name).
-MAX_TOOL_RESULT_CHARS = 300
-
-# The char budget above assumes 5 results/call, but nothing enforced that ceiling — the model can
-# (and did: 9, 10) ask web_search for more, still blowing past the 8K tokens/min throttle.
-MAX_WEB_SEARCH_RESULTS = 3
-
-# Forums/social platforms are user opinion, not vetted travel information. Excluded at the
-# Tavily API level (deterministic) rather than trusted to the model to self-filter.
-EXCLUDED_ACTIVITY_SEARCH_DOMAINS = [
-    "reddit.com",
-    "quora.com",
-    "pinterest.com",
-    "facebook.com",
-    "twitter.com",
-    "x.com",
-    "tiktok.com",
-    "instagram.com",
-]
 
 # A flight offer is only bookable for a short window because airfares are volatile. After this,
 # the booking is marked EXPIRED and the user must re-search rather than book a stale price.
@@ -81,18 +33,10 @@ BOOKING_TTL_MINUTES = 30
 # revalidate even more often than this.
 FLIGHT_CACHE_TTL_MINUTES = 15
 
-# Cerebras list prices (USD/M tokens) for the panel's estimated cost only.
-LLM_INPUT_PRICE_PER_MILLION_TOKENS = 0.59
-LLM_OUTPUT_PRICE_PER_MILLION_TOKENS = 0.79
-
 # The identity fallback is used only when security enforcement is disabled for development.
 DEMO_USER_EMAIL = "tonytrieu.dev@gmail.com"
 
-# Cap concurrent agent runs so a burst can't blow through the LLM provider's rate limits.
-MAX_CONCURRENT_AGENT_RUNS = 2
-
-# Per-client request cap on the expensive routes (/plan, /flights/search) — both spend real,
-# scarce third-party quota (LLM requests, the one-time SearchApi search allotment).
+# Per-client request cap on the flight-search route.
 RATE_LIMIT_MAX_REQUESTS = 10
 RATE_LIMIT_WINDOW_SECONDS = 60
 
@@ -102,9 +46,7 @@ class Settings(BaseSettings):
         env_file=(".env", "../.env"), env_file_encoding="utf-8", extra="ignore", populate_by_name=True
     )
 
-    cerebras_api_key: SecretStr = Field(validation_alias=CEREBRAS_API_KEY_ENVIRONMENT)
     searchapi_api_key: SecretStr
-    tavily_api_key: SecretStr
     database_url: str
 
     use_live_flight_api: bool = True

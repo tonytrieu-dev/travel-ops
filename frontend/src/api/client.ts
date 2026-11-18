@@ -6,7 +6,6 @@ import type {
   ExecutionPanelOut,
   FlightSearchOut,
   GlobalExecutionPanelOut,
-  PlanOut,
   ProblemDetail,
   TripRequestCreate,
   TripRequestOut,
@@ -146,12 +145,6 @@ export function updateTrip(
 
 export function searchTripFlights(tripId: number, signal?: AbortSignal): Promise<FlightSearchOut> {
   return request<FlightSearchOut>(`/trips/${tripId}/flights/search`, {
-    method: "POST", signal,
-  })
-}
-
-export function planTrip(tripId: number, signal?: AbortSignal): Promise<PlanOut> {
-  return request<PlanOut>(`/trips/${tripId}/plan`, {
     method: "POST", signal,
   })
 }
