@@ -19,3 +19,8 @@ def test_credential_retirement_downgrades_fail_explicitly(filename: str) -> None
     downgrade = runpy.run_path(str(VERSIONS / filename))["downgrade"]
     with pytest.raises(RuntimeError, match="forward-only"):
         downgrade()
+
+
+def test_trip_cleanup_preserves_runs_without_audit_events() -> None:
+    source = (VERSIONS / "e2fd12c1788c_require_age_and_fitness_drop_budget.py").read_text()
+    assert "agent_run.trip_request_id = trip_request.id" in source

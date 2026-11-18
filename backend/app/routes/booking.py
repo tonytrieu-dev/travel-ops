@@ -149,8 +149,12 @@ async def get_booking(
 async def confirm_booking(
     log_id: int,
     session: AsyncSession = Depends(get_session),
+    context: SecurityContext = Depends(get_security_context),
 ) -> BookingLogOut:
-    booking = await repository.confirm_booking(session, log_id)
+    booking = await repository.confirm_booking(
+        session, log_id, actor_user_id=context.user_id,
+        tenant_id=context.tenant_id, session_id=context.session_id or "",
+    )
     return _to_out(booking)
 
 
@@ -182,6 +186,10 @@ async def execute_booking(
 async def cancel_booking(
     log_id: int,
     session: AsyncSession = Depends(get_session),
+    context: SecurityContext = Depends(get_security_context),
 ) -> BookingLogOut:
-    booking = await repository.cancel_booking(session, log_id)
+    booking = await repository.cancel_booking(
+        session, log_id, actor_user_id=context.user_id,
+        tenant_id=context.tenant_id, session_id=context.session_id or "",
+    )
     return _to_out(booking)

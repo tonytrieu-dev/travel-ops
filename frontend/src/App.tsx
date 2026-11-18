@@ -102,6 +102,7 @@ function App() {
   const [role, setRole] = useState("traveler")
   const [mfaVerified, setMfaVerified] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [isBookingActionPending, setIsBookingActionPending] = useState(false)
   const tabs = TABS.filter((tab) => tab.roles.includes(role) && (!tab.privileged || mfaVerified))
   const currentTab = tabs.find((tab) => tab.key === activeTab) ?? tabs[0]
   const canPlanTrips = ["traveler", "trip-planner", "admin"].includes(role)
@@ -236,6 +237,7 @@ function App() {
                     onSearchFlights={handleSearchFlights}
                     onSearchNewFlight={handleStartNewSearch}
                     onSelectOffer={setSelectedOffer}
+                    selectionDisabled={isBookingActionPending}
                   />
 
                   {(["traveler", "admin"].includes(role)) && (
@@ -244,6 +246,7 @@ function App() {
                       trip={trip}
                       selectedOffer={selectedOffer}
                       onSearchAgain={handleSearchAgain}
+                      onPendingChange={setIsBookingActionPending}
                     />
                   )}
 

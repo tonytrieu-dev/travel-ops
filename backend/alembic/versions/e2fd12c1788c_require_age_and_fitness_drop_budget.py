@@ -22,6 +22,7 @@ depends_on: str | Sequence[str] | None = None
 # row is kept and backfilled instead. Only a trip with zero audit trail is safe to remove.
 _LEGACY_TRIP_WITH_NO_AUDIT_TRAIL = (
     "(age IS NULL OR fitness_level IS NULL) "
+    "AND NOT EXISTS (SELECT 1 FROM agent_run WHERE agent_run.trip_request_id = trip_request.id) "
     "AND NOT EXISTS (SELECT 1 FROM execution_event WHERE execution_event.trip_request_id = trip_request.id) "
     "AND NOT EXISTS (SELECT 1 FROM hitl_booking_log WHERE hitl_booking_log.trip_request_id = trip_request.id)"
 )

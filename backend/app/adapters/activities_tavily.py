@@ -3,6 +3,7 @@
 import logging
 from dataclasses import dataclass
 from typing import Protocol
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -67,8 +68,12 @@ class TavilyActivityProvider:
                     score=float(result.get("score", 0.0)),
                 )
                 for result in results
-                if isinstance(result, dict)
+                if isinstance(result, dict) and _is_safe_source_url(result.get("url"))
             ]
         except (AttributeError, TypeError, ValueError):
             logger.warning("tavily web_search returned malformed results for query=%r", query)
             return []
+
+
+def _is_safe_source_url(value: object) -> bool:
+    return isinstance(value, str) and urlsplit(value).scheme == "https" and bool(urlsplit(value).netloc)

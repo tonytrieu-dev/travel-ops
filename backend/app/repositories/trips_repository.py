@@ -72,6 +72,7 @@ async def list_trips(session: AsyncSession, user_id: int) -> list[TripRequest]:
             select(TripRequest)
             .where(col(TripRequest.user_id) == user_id)
             .order_by(col(TripRequest.created_at).desc(), col(TripRequest.id).desc())
+            .limit(100)
         )
     )
 
@@ -330,6 +331,7 @@ async def _execution_run_details(
             select(ExecutionEvent)
             .where(col(ExecutionEvent.agent_run_id).in_(run_ids))
             .order_by(col(ExecutionEvent.seq))
+            .limit(1000)
         )
     )
     events_by_run_id: dict[int, list[ExecutionEvent]] = defaultdict(list)

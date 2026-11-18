@@ -194,6 +194,7 @@ async def list_bookings_with_transitions_for_user(
             select(HITLBookingLog)
             .where(col(HITLBookingLog.requested_by_user_id) == user_id)
             .order_by(col(HITLBookingLog.created_at).desc())
+            .limit(100)
         )
     )
     if not bookings:
@@ -211,10 +212,18 @@ async def list_bookings_with_transitions_for_user(
     ]
 
 
-async def confirm_booking(session: AsyncSession, log_id: int) -> HITLBookingLog:
+async def confirm_booking(
+    session: AsyncSession, log_id: int, *, actor_user_id: int | None = None,
+    tenant_id: str | None = None, session_id: str | None = None,
+) -> HITLBookingLog:
     booking = await _lock_booking(session, log_id)
     if booking is None:
         raise BookingError(ErrorCode.BOOKING_NOT_FOUND, 404, f"No booking log {log_id}.")
+    if actor_user_id is not None and tenant_id is not None and session_id is not None:
+        await _verify_execution_principal(
+            session, booking, actor_user_id=actor_user_id,
+            tenant_id=tenant_id, session_id=session_id,
+        )
     if booking.state == BookingState.CONFIRMED:
         return booking  # idempotent: a double-clicked confirm is expected human behavior
     if booking.state == BookingState.PENDING_USER_CONFIRMATION and _is_expired(booking):
@@ -340,10 +349,18 @@ async def _verify_execution_principal(
         )
 
 
-async def cancel_booking(session: AsyncSession, log_id: int) -> HITLBookingLog:
+async def cancel_booking(
+    session: AsyncSession, log_id: int, *, actor_user_id: int | None = None,
+    tenant_id: str | None = None, session_id: str | None = None,
+) -> HITLBookingLog:
     booking = await _lock_booking(session, log_id)
     if booking is None:
         raise BookingError(ErrorCode.BOOKING_NOT_FOUND, 404, f"No booking log {log_id}.")
+    if actor_user_id is not None and tenant_id is not None and session_id is not None:
+        await _verify_execution_principal(
+            session, booking, actor_user_id=actor_user_id,
+            tenant_id=tenant_id, session_id=session_id,
+        )
     if booking.state == BookingState.CANCELLED:
         return booking  # idempotent
     if BookingState.CANCELLED not in ALLOWED_TRANSITIONS[booking.state]:

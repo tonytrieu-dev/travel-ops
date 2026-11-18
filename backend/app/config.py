@@ -142,6 +142,10 @@ class Settings(BaseSettings):
                 "ZERO_TRUST_SIGNING_SECRET must be at least 32 bytes when "
                 "ZERO_TRUST_ENFORCED is enabled"
             )
+        if self.device_gateway_secret is not None and len(self.device_gateway_secret.get_secret_value().encode()) < 32:
+            raise ValueError(
+                "DEVICE_GATEWAY_SECRET must be at least 32 bytes when configured"
+            )
         return self
 
 

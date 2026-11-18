@@ -24,6 +24,12 @@ test(`round-trip offers remain selectable with accurate direction stops (outboun
   assert.equal(view.queryByText("Nonstop", { exact: true }), null, "a round trip must not have a misleading overall nonstop label")
   fireEvent.click(view.getByRole("radio"))
   assert.equal(selected, offer)
+  view.rerender(createElement(FlightSearch, {
+    trip: { origin: "OAK", destination_airport: "ONT", depart_date: "2030-01-01", return_date: "2030-01-05" },
+    searchResult: { offers: [offer] }, isLoading: false, selectedOfferId: offer.id,
+    selectionDisabled: true, onSearchFlights() {}, onSearchNewFlight() {}, onSelectOffer() {},
+  }))
+  assert.equal(view.getByRole("radio").disabled, true)
 })
 }
 

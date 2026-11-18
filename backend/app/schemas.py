@@ -148,7 +148,7 @@ class BookingLogOut(BaseModel):
 
 class TripRequestCreate(BaseModel):
     origin: str
-    destination: str
+    destination: str = Field(max_length=200)
     destination_airport: str
     depart_date: str
     return_date: str | None = None
@@ -173,7 +173,7 @@ class TripRequestCreate(BaseModel):
 
 class TripRequestUpdate(BaseModel):
     origin: str | None = None
-    destination: str | None = None
+    destination: str | None = Field(default=None, max_length=200)
     destination_airport: str | None = None
     depart_date: str | None = None
     return_date: str | None = None

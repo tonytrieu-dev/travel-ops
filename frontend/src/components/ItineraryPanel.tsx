@@ -152,14 +152,16 @@ export function ItineraryPanel({
                   <li key={activity.name} className="rounded-md border border-slate-100 bg-white p-3">
                     <span className="font-medium text-slate-900">{activity.name}</span>
                     <p className="mt-1 text-sm text-slate-600">{activity.description}</p>
-                    <a
-                      href={activity.source_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="mt-1 inline-block text-xs text-indigo-600 hover:underline"
-                    >
-                      Source
-                    </a>
+                    {activity.source_url.startsWith("https://") && (
+                      <a
+                        href={activity.source_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-1 inline-block text-xs text-indigo-600 hover:underline"
+                      >
+                        Source
+                      </a>
+                    )}
                   </li>
                 ))}
               </ul>

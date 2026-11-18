@@ -16,6 +16,7 @@ interface BookingModuleProps {
   trip: TripRequestOut
   selectedOffer: FlightOfferOut | null
   onSearchAgain: () => void
+  onPendingChange?: (pending: boolean) => void
 }
 
 const POLL_INTERVAL_MS = 1_000
@@ -62,7 +63,7 @@ function searchAgainMessage(state: string): string | null {
   return null
 }
 
-export function BookingModule({ trip, selectedOffer, onSearchAgain }: BookingModuleProps) {
+export function BookingModule({ trip, selectedOffer, onSearchAgain, onPendingChange }: BookingModuleProps) {
   const [bookingLog, setBookingLog] = useState<BookingLogOut | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -139,6 +140,7 @@ export function BookingModule({ trip, selectedOffer, onSearchAgain }: BookingMod
   const runAction = async (action: () => Promise<BookingLogOut>) => {
     invalidateRequests()
     setIsLoading(true)
+    onPendingChange?.(true)
     setErrorMessage(null)
     try {
       const updated = await action()
@@ -159,6 +161,7 @@ export function BookingModule({ trip, selectedOffer, onSearchAgain }: BookingMod
       }
     } finally {
       setIsLoading(false)
+      onPendingChange?.(false)
     }
   }
 

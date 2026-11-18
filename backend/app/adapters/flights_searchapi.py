@@ -267,6 +267,7 @@ class LiveSearchApiProvider:
         outbound_date: str,
         return_date: str,
     ) -> tuple[list[NormalizedFlightOffer], str]:
+        # SearchApi can return a very large candidate list; resolve only the cheapest bounded set.
         resolved = await asyncio.gather(
             *(
                 self._pair_round_trip_offer(
@@ -276,7 +277,7 @@ class LiveSearchApiProvider:
                     outbound_date=outbound_date,
                     return_date=return_date,
                 )
-                for offer in candidates
+                for offer in candidates[:20]
             ),
             return_exceptions=True,
         )

@@ -9,6 +9,7 @@ interface FlightSearchProps {
   onSearchFlights: () => void
   onSearchNewFlight: () => void
   onSelectOffer: (offer: FlightOfferOut) => void
+  selectionDisabled?: boolean
 }
 
 function formatDateTime(isoString: string): string {
@@ -54,6 +55,7 @@ export function FlightSearch({
   onSearchFlights,
   onSearchNewFlight,
   onSelectOffer,
+  selectionDisabled = false,
 }: FlightSearchProps) {
   const offers = searchResult?.offers ?? []
 
@@ -134,6 +136,7 @@ export function FlightSearch({
                       name="flight-offer"
                       checked={selectedOfferId === offer.id}
                       onChange={() => onSelectOffer(offer)}
+                      disabled={selectionDisabled}
                       className="h-4 w-4"
                     />
                     <div className="space-y-3">

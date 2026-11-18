@@ -69,7 +69,18 @@ def test_enforced_signing_secret_requires_32_bytes() -> None:
     with pytest.raises(ValidationError, match="at least 32 bytes"):
         Settings(**settings, zero_trust_signing_secret="x" * 31)
 
-    assert Settings(**settings, zero_trust_signing_secret="x" * 32)
+
+def test_configured_gateway_secret_requires_32_bytes() -> None:
+    settings = {
+        "cerebras_api_key": "x",
+        "searchapi_api_key": "x",
+        "tavily_api_key": "x",
+        "database_url": "postgresql+asyncpg://localhost/travel_agent_test",
+        "zero_trust_enforced": True,
+        "zero_trust_signing_secret": "x" * 32,
+    }
+    with pytest.raises(ValidationError, match="DEVICE_GATEWAY_SECRET"):
+        Settings(**settings, device_gateway_secret="x" * 31)
 
 
 def test_runtime_configuration_cannot_disable_security(monkeypatch: pytest.MonkeyPatch) -> None:
