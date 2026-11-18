@@ -5,6 +5,7 @@ unavailable_reason, never a fabricated offer.
 
 import asyncio
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -98,13 +99,35 @@ def derive_flight_legs(raw_offer: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _offer_is_complete(raw_offer: dict[str, Any], token: str | None) -> bool:
+    return bool(raw_offer.get("flights") and "price" in raw_offer and token)
+
+
 def _parse_offers(payload: dict[str, Any]) -> list[NormalizedFlightOffer]:
     # Round-trip offers carry departure_token, not booking_token (confirmed against a real payload).
     offers: list[NormalizedFlightOffer] = []
-    for raw_offer in [*payload.get("best_flights", []), *payload.get("other_flights", [])]:
-        flights = raw_offer.get("flights", [])
+    raw_offers = [
+        offer
+        for group in (payload.get("best_flights", []), payload.get("other_flights", []))
+        if isinstance(group, list)
+        for offer in group
+        if isinstance(offer, dict)
+    ]
+    for raw_offer in raw_offers:
         token = raw_offer.get("booking_token") or raw_offer.get("departure_token")
-        if not flights or "price" not in raw_offer or not token:
+        if not isinstance(token, str) or not _offer_is_complete(raw_offer, token):
+            continue
+        flights = raw_offer["flights"]
+        if (
+            not isinstance(flights, list)
+            or not flights
+            or not all(
+                isinstance(flight, dict)
+                and isinstance(flight.get("departure_airport"), dict)
+                and isinstance(flight.get("arrival_airport"), dict)
+                for flight in flights
+            )
+        ):
             continue
         first_leg, last_leg = flights[0], flights[-1]
         offers.append(
@@ -135,6 +158,19 @@ class LiveSearchApiProvider:
         outbound_date: str,
         return_date: str | None,
     ) -> FlightSearchOutcome:
+        fetched = await self._fetch_offers(departure_id, arrival_id, outbound_date, return_date)
+        if isinstance(fetched, FlightSearchOutcome):
+            return fetched
+        if return_date is None:
+            return FlightSearchOutcome(offers=fetched)
+        return await self._resolve_round_trip(
+            fetched, departure_id, arrival_id, outbound_date, return_date
+        )
+
+    async def _fetch_offers(
+        self, departure_id: str, arrival_id: str, outbound_date: str, return_date: str | None
+    ) -> list[NormalizedFlightOffer] | FlightSearchOutcome:
+        """Returns parsed offers, or a FlightSearchOutcome carrying the unavailable_reason."""
         params = {
             "engine": "google_flights",
             "departure_id": departure_id,
@@ -165,24 +201,28 @@ class LiveSearchApiProvider:
                 )
             )
 
+        context = f"departure_id={departure_id} arrival_id={arrival_id} outbound_date={outbound_date}"
         if response.status_code == 429:
             return FlightSearchOutcome(
-                unavailable_reason=(
-                    "searchapi flight search failed: HTTP 429 quota exhausted "
-                    f"(departure_id={departure_id} arrival_id={arrival_id} "
-                    f"outbound_date={outbound_date})"
-                )
+                unavailable_reason=f"searchapi flight search failed: HTTP 429 quota exhausted ({context})"
             )
         if response.status_code != 200:
             return FlightSearchOutcome(
                 unavailable_reason=(
                     f"searchapi flight search failed: HTTP {response.status_code} "
-                    f"(departure_id={departure_id} arrival_id={arrival_id} "
-                    f"outbound_date={outbound_date}): {response.text}"
+                    f"({context}): {response.text}"
                 )
             )
 
-        offers = _parse_offers(response.json())
+        try:
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError("response body is not an object")
+            offers = _parse_offers(payload)
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
+            return FlightSearchOutcome(
+                unavailable_reason=f"searchapi flight search returned malformed data: {error}"
+            )
         if not offers:
             return FlightSearchOutcome(
                 unavailable_reason=(
@@ -190,15 +230,44 @@ class LiveSearchApiProvider:
                     f"{arrival_id} on {outbound_date}"
                 )
             )
-        if return_date is None:
-            return FlightSearchOutcome(offers=offers)
+        return offers
 
-        # Prefer nonstop offers, but do not fail a route that only has connecting options.
-        nonstop_offers = sorted(
-            (offer for offer in offers if offer.stops == 0),
-            key=lambda offer: offer.price_usd,
-        )[:3]
-        displayed_offers = nonstop_offers or sorted(offers, key=lambda offer: offer.price_usd)[:3]
+    async def _resolve_round_trip(
+        self,
+        offers: list[NormalizedFlightOffer],
+        departure_id: str,
+        arrival_id: str,
+        outbound_date: str,
+        return_date: str,
+    ) -> FlightSearchOutcome:
+        # Prefer nonstop offers, falling back only when none can form a full round trip.
+        def cheapest(matching: Iterable[NormalizedFlightOffer]) -> list[NormalizedFlightOffer]:
+            return sorted(matching, key=lambda offer: offer.price_usd)
+
+        nonstop_offers = cheapest(offer for offer in offers if offer.stops == 0)
+        connecting_offers = cheapest(offer for offer in offers if offer.stops > 0)
+        detail = "no outbound offers"
+        for candidates in (nonstop_offers, connecting_offers):
+            if not candidates:
+                continue
+            paired_offers, detail = await self._pair_candidates(
+                candidates, departure_id, arrival_id, outbound_date, return_date
+            )
+            if paired_offers:
+                return FlightSearchOutcome(offers=paired_offers)
+        return FlightSearchOutcome(
+            unavailable_reason=f"searchapi could not resolve exact round-trip offers: {detail}"
+        )
+
+    async def _pair_candidates(
+        self,
+        candidates: list[NormalizedFlightOffer],
+        departure_id: str,
+        arrival_id: str,
+        outbound_date: str,
+        return_date: str,
+    ) -> tuple[list[NormalizedFlightOffer], str]:
+        # SearchApi can return a very large candidate list; resolve only the cheapest bounded set.
         resolved = await asyncio.gather(
             *(
                 self._pair_round_trip_offer(
@@ -208,19 +277,14 @@ class LiveSearchApiProvider:
                     outbound_date=outbound_date,
                     return_date=return_date,
                 )
-                for offer in displayed_offers
+                for offer in candidates[:20]
             ),
             return_exceptions=True,
         )
         paired_offers = [
             result for result in resolved if isinstance(result, NormalizedFlightOffer)
         ]
-        if paired_offers:
-            return FlightSearchOutcome(offers=paired_offers)
-        detail = str(resolved[0]) if resolved else "no outbound offers"
-        return FlightSearchOutcome(
-            unavailable_reason=f"searchapi could not resolve exact round-trip offers: {detail}"
-        )
+        return paired_offers, str(resolved[0])
 
     async def _get_or_raise(self, params: dict[str, Any], *, action: str, desc: str) -> dict[str, Any]:
         """Shared GET + error handling for calls that raise on failure. search_offers keeps its

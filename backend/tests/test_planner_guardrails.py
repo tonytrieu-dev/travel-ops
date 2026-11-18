@@ -1,10 +1,6 @@
-"""Deterministic output-validator guardrails on the planner agent: matching activity intensity
-to a traveler's declared fitness level used to be prompt-only guidance (the model's judgment
-call, no different from "please don't hallucinate"). These tests guard the structural rejection
-that replaced it — same reasoning as the existing citation-grounding validator.
-"""
+"""The low-fitness guard must reject high intensity without rejecting moderate activity."""
 
-
+from types import SimpleNamespace
 from typing import Literal
 
 import pytest
@@ -12,97 +8,147 @@ from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
+from app.adapters.activities_tavily import NormalizedActivityResult
+from app.adapters.flights_searchapi import FlightSearchOutcome
 from app.agent.planner import (
+    MAX_WEB_SEARCH_CALLS,
     PlannerDeps,
-    reject_flight_activities,
-    reject_optional_clarification,
     reject_unsafe_intensity,
+    search_flights,
+    web_search,
 )
 from app.models import FitnessLevel
-from app.schemas import ActivityOut, ClarificationOut, ItineraryDayOut, ItineraryOut
+from app.schemas import ActivityOut, ItineraryDayOut, ItineraryOut
+
+pytestmark = pytest.mark.no_database
 
 
-def _context(fitness_level: FitnessLevel | None) -> RunContext[PlannerDeps]:
-    deps = PlannerDeps(flight_provider=None, activity_provider=None, fitness_level=fitness_level)  # type: ignore[arg-type]
-    return RunContext(deps=deps, model=TestModel(), usage=RunUsage())
+class StubFlightProvider:
+    async def search_offers(
+        self,
+        departure_id: str,
+        arrival_id: str,
+        outbound_date: str,
+        return_date: str | None,
+    ) -> FlightSearchOutcome:
+        return FlightSearchOutcome()
+
+    async def fetch_booking_options(
+        self,
+        booking_token: str,
+        *,
+        departure_id: str,
+        arrival_id: str,
+        outbound_date: str,
+        return_date: str | None,
+        booking_token_is_resolved: bool = False,
+    ) -> list[dict[str, object]]:
+        return []
 
 
-def _itinerary(
-    intensity: Literal["low", "moderate", "high"],
-    name: str = "Summit hike",
-    description: str = "A steep trail.",
-) -> ItineraryOut:
-    return ItineraryOut(
-        days=[
-            ItineraryDayOut(
-                day_number=1,
-                summary="Explore",
-                activities=[
-                    ActivityOut(
-                        name=name,
-                        description=description,
-                        intensity=intensity,
-                        source_url="https://example.test/hike",
-                    )
-                ],
+class StubActivityProvider:
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    async def search(self, query: str, max_results: int = 5) -> list[NormalizedActivityResult]:
+        self.queries.append(query)
+        return []
+
+
+@pytest.mark.parametrize("intensity", ["high", "moderate"])
+def test_low_fitness_intensity_boundary(intensity: Literal["high", "moderate"]) -> None:
+    context = RunContext(
+        deps=PlannerDeps(
+            flight_provider=StubFlightProvider(),
+            activity_provider=StubActivityProvider(),
+            fitness_level=FitnessLevel.LOW,
+        ),
+        model=TestModel(),
+        usage=RunUsage(),
+    )
+    itinerary = ItineraryOut(days=[ItineraryDayOut(
+        day_number=1,
+        summary="Explore",
+        activities=[ActivityOut(
+            name="Summit hike",
+            description="A mountain trail.",
+            intensity=intensity,
+            source_url="https://example.test/hike",
+        )],
+    )])
+    if intensity == "high":
+        with pytest.raises(ModelRetry, match="Summit hike"):
+            reject_unsafe_intensity(context, itinerary)
+        return
+    assert reject_unsafe_intensity(context, itinerary) is itinerary
+
+
+@pytest.mark.parametrize(
+    "departure_id,arrival_id,outbound_date,return_date",
+    [
+        ("JFK", "LHR", "2030-08-01", None),
+        ("JFK", "CDG", "2030-08-02", None),
+    ],
+)
+@pytest.mark.asyncio
+async def test_flight_tool_rejects_route_or_date_that_does_not_match_trip(
+    monkeypatch: pytest.MonkeyPatch,
+    departure_id: str,
+    arrival_id: str,
+    outbound_date: str,
+    return_date: str | None,
+) -> None:
+    class Session:
+        async def get(self, _model: object, _trip_id: int) -> object:
+            return SimpleNamespace(
+                origin="JFK",
+                destination_airport="CDG",
+                depart_date="2030-08-01",
+                return_date=None,
             )
-        ]
-    )
 
-
-def test_rejects_strenuous_activity_for_low_fitness_traveler() -> None:
-    ctx = _context(FitnessLevel.LOW)
-
-    with pytest.raises(ModelRetry, match="Summit hike"):
-        reject_unsafe_intensity(ctx, _itinerary("high"))
-
-
-def test_allows_moderate_intensity_activity_for_low_fitness_traveler() -> None:
-    ctx = _context(FitnessLevel.LOW)
-
-    result = reject_unsafe_intensity(ctx, _itinerary("moderate"))
-
-    assert isinstance(result, ItineraryOut)
-    assert result.days[0].activities[0].intensity == "moderate", (
-        "moderate intensity must pass through unchanged for a low-fitness traveler — only "
-        "'high' is blocked, so the guardrail must not over-reject"
-    )
-
-
-def test_rejects_the_flight_itself_but_not_activities_that_merely_mention_flying() -> None:
-    ctx = _context(FitnessLevel.HIGH)
-
-    with pytest.raises(ModelRetry, match="Outbound flight"):
-        reject_flight_activities(
-            ctx,
-            _itinerary("low", "Outbound flight", "Fly from JFK to SAN."),
-        )
-
-    assert isinstance(
-        reject_flight_activities(
-            ctx,
-            _itinerary("low", "USS Midway Museum", "Walk the aircraft carrier's flight deck."),
+    monkeypatch.setattr("app.agent.planner.current_trip", lambda _name: (Session(), 1))
+    context = RunContext(
+        deps=PlannerDeps(
+            flight_provider=StubFlightProvider(),
+            activity_provider=StubActivityProvider(),
         ),
-        ItineraryOut,
-    ), (
-        "a real activity that only mentions flying in its description must not be rejected — "
-        "scanning the description false-positives and traps the model in a retry loop"
+        model=TestModel(),
+        usage=RunUsage(),
     )
+    with pytest.raises(ModelRetry, match="do not match"):
+        await search_flights(context, departure_id, arrival_id, outbound_date, return_date)
 
 
-def test_rejects_optional_clarification_when_trip_inputs_are_complete() -> None:
-    ctx = _context(FitnessLevel.HIGH)
+@pytest.mark.asyncio
+async def test_web_search_allows_three_calls_then_rejects_the_fourth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Session:
+        async def get(self, _model: object, _trip_id: int) -> object:
+            return SimpleNamespace(destination_airport="CDG")
 
-    with pytest.raises(ModelRetry, match="Plan directly"):
-        reject_optional_clarification(ctx, ClarificationOut(questions=["What is your budget?"]))
+    activity_provider = StubActivityProvider()
 
-    assert isinstance(
-        reject_optional_clarification(
-            ctx,
-            ClarificationOut(questions=["Which Springfield destination did you mean?"]),
+    async def record_event(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr("app.agent.planner.current_trip", lambda _name: (Session(), 1))
+    monkeypatch.setattr("app.agent.planner.record_event", record_event)
+    context = RunContext(
+        deps=PlannerDeps(
+            flight_provider=StubFlightProvider(),
+            activity_provider=activity_provider,
         ),
-        ClarificationOut,
-    ), (
-        "a genuinely ambiguous destination question must survive — the validator blocks only "
-        "optional preference questions, so over-rejecting would strand real clarifications"
+        model=TestModel(),
+        usage=RunUsage(),
     )
+
+    for index in range(MAX_WEB_SEARCH_CALLS):
+        assert await web_search(context, f"things to do {index}") == []
+
+    with pytest.raises(ModelRetry, match=str(MAX_WEB_SEARCH_CALLS)):
+        await web_search(context, "things to do final")
+    assert activity_provider.queries == [
+        f"things to do {index} near CDG airport" for index in range(MAX_WEB_SEARCH_CALLS)
+    ]

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react"
-import { useAllExecution } from "../hooks/useAllExecution"
-import type { AgentRunOut, AgentRunStepOut, TripRequestOut } from "../api/types"
+import { getAllExecution } from "../api/client"
+import type { AgentRunOut, AgentRunStepOut, GlobalExecutionPanelOut, TripRequestOut } from "../api/types"
+import { usePolledResource } from "../hooks/usePolledResource"
 import { FilterSelect } from "./FilterSelect"
 
 interface ExecutionPanelProps {
@@ -36,7 +37,7 @@ const STATUS_LABELS: Record<string, string> = {
   failed: "Failed",
   no_result: "No result",
   unavailable: "Unavailable",
-  rejected: "Rejected — retried",
+  rejected: "Rejected, retried",
 }
 
 function statusLabel(status: string): string {
@@ -148,11 +149,11 @@ function AgentRunCard({ run, tripLabel }: { run: AgentRunOut; tripLabel: string 
         />
         <MetricTile
           label="Context used"
-          value={run.budget_utilization_pct != null ? `${run.budget_utilization_pct.toFixed(1)}%` : "—"}
+          value={run.budget_utilization_pct != null ? `${run.budget_utilization_pct.toFixed(1)}%` : "Not available"}
         />
         <MetricTile
           label="Estimated cost"
-          value={run.estimated_cost_usd != null ? `$${run.estimated_cost_usd.toFixed(4)}` : "—"}
+          value={run.estimated_cost_usd != null ? `$${run.estimated_cost_usd.toFixed(4)}` : "Not available"}
         />
         <MetricTile label="Steps" value={String(run.steps.length)} />
       </div>
@@ -167,7 +168,16 @@ function AgentRunCard({ run, tripLabel }: { run: AgentRunOut; tripLabel: string 
 }
 
 export function ExecutionPanel({ trips, isRunActive }: ExecutionPanelProps) {
-  const { runs: allRuns, errorMessage } = useAllExecution({ isRunActive })
+  const [pageCursors, setPageCursors] = useState<(number | undefined)[]>([undefined])
+  const beforeRunId = pageCursors[pageCursors.length - 1]
+  const fetcher = useMemo(() => (signal: AbortSignal) => getAllExecution(beforeRunId, signal), [beforeRunId])
+  const { data, errorMessage, hasLoaded } = usePolledResource<GlobalExecutionPanelOut>({
+    fetcher,
+    isRunActive,
+    resourceKey: `execution-history:${beforeRunId ?? "latest"}`,
+    errorText: "Could not load execution data.",
+  })
+  const allRuns = useMemo(() => data?.agent_runs ?? [], [data])
   const [routeSearch, setRouteSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
 
@@ -176,15 +186,11 @@ export function ExecutionPanel({ trips, isRunActive }: ExecutionPanelProps) {
     const trip = tripsById.get(run.trip_request_id)
     return trip ? tripLabel(trip) : `Trip #${run.trip_request_id}`
   }
-  // The set of distinct statuses that have actually occurred, not a hardcoded enum — stays
-  // correct if a new status value ever shows up without needing a matching code change here.
   const statusOptions = useMemo(
     () => [...new Set(allRuns.map((run) => run.status))].sort(),
     [allRuns],
   )
   const trimmedRouteSearch = routeSearch.trim().toLowerCase()
-  // A dropdown listing every trip doesn't scale past a handful of entries — a text filter over
-  // the (already-visible) route label does, regardless of how many trips exist.
   const runs = allRuns.filter(
     (run) =>
       (statusFilter === "all" || run.status === statusFilter) &&
@@ -221,8 +227,8 @@ export function ExecutionPanel({ trips, isRunActive }: ExecutionPanelProps) {
         )}
       </div>
       <p className="-mt-2 text-sm text-slate-500">
-        Every agent run across every trip, newest first. Model usage and external tool activity
-        are reported inline within each run.
+        Agent runs across every trip, newest first, 20 per page. Filters apply to this page.
+        Model usage and external tool activity are reported inline within each run.
       </p>
 
       {errorMessage && (
@@ -231,7 +237,8 @@ export function ExecutionPanel({ trips, isRunActive }: ExecutionPanelProps) {
         </p>
       )}
 
-      {runs.length === 0 && (
+      {!hasLoaded && !errorMessage && <p role="status">Loading execution history…</p>}
+      {hasLoaded && runs.length === 0 && (
         <p className="rounded-xl border border-dashed border-slate-300 bg-white p-6 text-sm text-slate-500">
           {isFiltered
             ? "No runs match this filter."
@@ -242,6 +249,18 @@ export function ExecutionPanel({ trips, isRunActive }: ExecutionPanelProps) {
       {runs.map((run) => (
         <AgentRunCard key={run.id} run={run} tripLabel={runTripLabel(run)} />
       ))}
+      <nav aria-label="Execution history pages" className="flex items-center justify-between gap-3">
+        <button type="button" disabled={pageCursors.length === 1 || !data}
+          onClick={() => setPageCursors((previous) => previous.slice(0, -1))}
+          className="rounded border px-3 py-2 disabled:opacity-40">Newer runs</button>
+        <span>Page {pageCursors.length}</span>
+        <button type="button" disabled={data?.next_before_run_id == null}
+          onClick={() => {
+            const nextCursor = data?.next_before_run_id
+            if (nextCursor != null) setPageCursors((previous) => [...previous, nextCursor])
+          }}
+          className="rounded border px-3 py-2 disabled:opacity-40">Older runs</button>
+      </nav>
     </section>
   )
 }

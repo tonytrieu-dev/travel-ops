@@ -14,10 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from app.adapters.flights_searchapi import FlightProvider, NormalizedFlightOffer
-from app.agent.execution_log import record_event
+from app.agent.execution_log import finish_run, record_event
 from app.config import FLIGHT_CACHE_TTL_MINUTES
 from app.models import (
-    AgentRun,
     AgentRunStep,
     AgentStepKind,
     ExecutionEventKind,
@@ -77,50 +76,51 @@ class FlightSearchService:
         self,
         trip_id: int,
         *,
-        agent_run: AgentRun | None = None,
+        record_run: bool = False,
         persist: bool = True,
         allow_cross_trip_cache: bool = True,
     ) -> TripFlightSearchOutcome:
         trip = await self._session.get(TripRequest, trip_id)
         if trip is None:
             raise TripError(ErrorCode.TRIP_NOT_FOUND, 404, f"No trip {trip_id}.")
-        # Captured once per call so every branch (cache hit, cross-trip cache, live) can
-        # finalize agent_run.started_at/total_ms consistently with the pre-refactor
-        # _record_search_flights_run, which timed the whole call, not just the provider hop.
+        # Run timing includes cache checks, not just the provider call.
+        searched_criteria = (trip.origin, trip.destination_airport, trip.depart_date, trip.return_date)
         run_started_at = utcnow()
         run_started_monotonic = time.monotonic()
 
+        if persist:
+            # Serialize cache misses for one trip so concurrent requests cannot burn provider
+            # quota and persist multiple result batches for the same search.
+            trip = await self._lock_unchanged_trip(trip_id, searched_criteria)
         same_trip_cache = await self._get_same_trip_cache(trip)
         if same_trip_cache:
             await self._log(
-                trip, agent_run, "ok",
+                trip, record_run, "ok",
                 f"{len(same_trip_cache)} offers (reused, already searched within TTL)",
                 same_trip_cache, run_started_at, run_started_monotonic,
             )
             return TripFlightSearchOutcome(same_trip_cache, None, "same_trip_cache")
         if allow_cross_trip_cache:
-            cross_trip_offers = await self._get_cross_trip_cache(trip)
-            if cross_trip_offers:
-                results = [
-                    FlightSearchResult(
-                        trip_request_id=trip_id, offer_index=source_offer.offer_index,
-                        carrier=source_offer.carrier, price_usd=source_offer.price_usd,
-                        currency=source_offer.currency, depart_at=source_offer.depart_at,
-                        arrive_at=source_offer.arrive_at, stops=source_offer.stops,
-                        booking_token=source_offer.booking_token, raw_offer=source_offer.raw_offer,
-                        source=FlightResultSource.CACHED,
-                    )
-                    for source_offer in cross_trip_offers
-                ]
-                self._session.add_all(results)
-                trip.status = TripStatus.FLIGHTS_SEARCHED
-                await self._session.commit()
-                await self._log(
-                    trip, agent_run, "ok",
-                    f"{len(results)} offers (cached from an identical route/date search)",
-                    results, run_started_at, run_started_monotonic,
-                )
-                return TripFlightSearchOutcome(cheapest_first(results), None, "cross_trip_cache")
+            cross_trip_outcome = await self._try_cross_trip_cache(
+                trip, trip_id, searched_criteria, record_run, run_started_at, run_started_monotonic
+            )
+            if cross_trip_outcome is not None:
+                return cross_trip_outcome
+        return await self._search_live(
+            trip, trip_id, searched_criteria, record_run, persist,
+            run_started_at, run_started_monotonic,
+        )
+
+    async def _search_live(
+        self,
+        trip: TripRequest,
+        trip_id: int,
+        searched_criteria: tuple[str, str, str, str | None],
+        record_run: bool,
+        persist: bool,
+        run_started_at: datetime,
+        run_started_monotonic: float,
+    ) -> TripFlightSearchOutcome:
         provider_started = time.monotonic()
         outcome = await self._provider.search_offers(
             trip.origin, trip.destination_airport, trip.depart_date, trip.return_date
@@ -141,7 +141,7 @@ class FlightSearchService:
                 trip.status = TripStatus.FLIGHTS_SEARCHED
             await self._session.commit()
         await self._log(
-            trip, agent_run,
+            trip, record_run,
             "ok" if outcome.unavailable_reason is None else "unavailable",
             f"{len(results)} offers" if outcome.unavailable_reason is None else outcome.unavailable_reason,
             outcome.offers if not persist else results,
@@ -149,6 +149,53 @@ class FlightSearchService:
             provider_duration_ms,
         )
         return TripFlightSearchOutcome(cheapest_first(results), outcome.unavailable_reason, "live")
+
+    async def _try_cross_trip_cache(
+        self,
+        trip: TripRequest,
+        trip_id: int,
+        searched_criteria: tuple[str, str, str, str | None],
+        record_run: bool,
+        run_started_at: datetime,
+        run_started_monotonic: float,
+    ) -> "TripFlightSearchOutcome | None":
+        """Reuse an identical route/date search from another trip, if one exists in the cache."""
+        cross_trip_offers = await self._get_cross_trip_cache(trip)
+        if not cross_trip_offers:
+            return None
+        results = [
+            FlightSearchResult(
+                trip_request_id=trip_id, offer_index=source_offer.offer_index,
+                carrier=source_offer.carrier, price_usd=source_offer.price_usd,
+                currency=source_offer.currency, depart_at=source_offer.depart_at,
+                arrive_at=source_offer.arrive_at, stops=source_offer.stops,
+                booking_token=source_offer.booking_token, raw_offer=source_offer.raw_offer,
+                source=FlightResultSource.CACHED,
+                created_at=source_offer.created_at,
+            )
+            for source_offer in cross_trip_offers
+        ]
+        trip = await self._lock_unchanged_trip(trip_id, searched_criteria)
+        self._session.add_all(results)
+        trip.status = TripStatus.FLIGHTS_SEARCHED
+        await self._session.commit()
+        await self._log(
+            trip, record_run, "ok",
+            f"{len(results)} offers (cached from an identical route/date search)",
+            results, run_started_at, run_started_monotonic,
+        )
+        return TripFlightSearchOutcome(cheapest_first(results), None, "cross_trip_cache")
+
+    async def _lock_unchanged_trip(
+        self, trip_id: int, searched_criteria: tuple[str, str, str, str | None],
+    ) -> TripRequest:
+        trip = await self._session.scalar(
+            select(TripRequest).where(col(TripRequest.id) == trip_id)
+            .with_for_update().execution_options(populate_existing=True)
+        )
+        if trip is None or (trip.origin, trip.destination_airport, trip.depart_date, trip.return_date) != searched_criteria:
+            raise TripError(ErrorCode.INVALID_TRANSITION, 409, "The trip changed during flight search; search again.")
+        return trip
 
     async def _get_same_trip_cache(self, trip: TripRequest) -> list[FlightSearchResult]:
         cutoff = utcnow() - timedelta(minutes=FLIGHT_CACHE_TTL_MINUTES)
@@ -192,7 +239,7 @@ class FlightSearchService:
     async def _log(
         self,
         trip: TripRequest,
-        agent_run: AgentRun | None,
+        record_run: bool,
         status: str,
         detail: str,
         offers: list[FlightSearchResult] | list[NormalizedFlightOffer],
@@ -203,26 +250,22 @@ class FlightSearchService:
         await record_event(
             ExecutionEventKind.API_CALL, "search_flights", status, detail, duration_ms,
             data={"offers": [offer_summary(offer) for offer in offers]},
-            provider=agent_run.model if agent_run is not None else flight_provider_name(self._provider),
+            provider=flight_provider_name(self._provider),
         )
-        if agent_run is None:
+        if not record_run:
             return
-        finished_at = utcnow()
         total_ms = round((time.monotonic() - run_started_monotonic) * 1000)
-        assert agent_run.id is not None
-        agent_run.status = "completed" if status == "ok" else status
-        agent_run.started_at = run_started_at
-        agent_run.finished_at = finished_at
-        agent_run.total_ms = total_ms
-        self._session.add(
-            AgentRunStep(
-                agent_run_id=agent_run.id, seq=1, kind=AgentStepKind.TOOL, name="search_flights",
+        await finish_run(
+            "completed" if status == "ok" else status,
+            started_at=run_started_at,
+            total_ms=total_ms,
+            steps=[AgentRunStep(
+                seq=1, kind=AgentStepKind.TOOL, name="search_flights",
                 status=status, duration_ms=duration_ms if duration_ms is not None else total_ms,
                 input_summary=(
                     f"{trip.origin} to {trip.destination_airport}, "
                     f"{trip.depart_date} to {trip.return_date or 'one-way'}"
                 ),
                 output_summary=detail, tokens=0,
-            )
+            )],
         )
-        await self._session.commit()

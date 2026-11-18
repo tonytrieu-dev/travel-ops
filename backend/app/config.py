@@ -5,16 +5,30 @@ Every tunable the agent and adapters rely on lives here as a named constant — 
 numbers scattered through the codebase.
 """
 
+import re
+import secrets
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import SecretStr, computed_field
+from baml_sdk import get_baml_source_files
+from pydantic import Field, SecretStr, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Cerebras runs gpt-oss-120b directly and keeps clean JSON tool-calls for Pydantic AI.
-CEREBRAS_MODEL = "gpt-oss-120b"
-GEMINI_JUDGE_MODEL = "gemini-3.6-flash"
 
+def load_planner_client() -> tuple[str, str, str]:
+    source = get_baml_source_files()["travel_planner.baml"]
+    match = re.search(
+        r'client Cerebras = openai\.GenericClient\.new\(\s*'
+        r'model\s*=\s*"([^"]+)",\s*base_url\s*=\s*"([^"]+)",\s*'
+        r'api_key\s*=\s*env\.([A-Z_][A-Z_0-9]*),\s*\);',
+        source,
+    )
+    if match is None:
+        raise RuntimeError("Unsupported BAML Cerebras client definition; update the runtime loader")
+    return match[1], match[2], match[3]
+
+
+CEREBRAS_MODEL, CEREBRAS_BASE_URL, CEREBRAS_API_KEY_ENVIRONMENT = load_planner_client()
 SEARCHAPI_BASE_URL = "https://www.searchapi.io/api/v1/search"
 SEARCHAPI_TIMEOUT_SECONDS = 60.0
 
@@ -22,14 +36,6 @@ SLACK_API_TIMEOUT_SECONDS = 10.0
 
 # RecordedProvider replays real-captured payloads from here; never hand-fabricated.
 FLIGHT_CASSETTE_DIR = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "recorded" / "flights"
-ACTIVITY_CASSETTE_PATH = (
-    Path(__file__).resolve().parent.parent
-    / "tests"
-    / "fixtures"
-    / "recorded"
-    / "activities"
-    / "san_diego.json"
-)
 
 # Agent guardrails: MAX_TOOL_STEPS/MAX_REQUESTS_PER_RUN bound the ReAct loop's iteration count.
 # MAX_CONTEXT_TOKENS matches gpt-oss-120b's real 30_000 tokens/minute limit on Cerebras — don't
@@ -79,14 +85,13 @@ FLIGHT_CACHE_TTL_MINUTES = 15
 LLM_INPUT_PRICE_PER_MILLION_TOKENS = 0.59
 LLM_OUTPUT_PRICE_PER_MILLION_TOKENS = 0.79
 
-# No auth yet: every request acts as this one fixed user. get_current_user() is the single seam
-# that will start resolving a real identity later — route handlers never read this directly.
+# The identity fallback is used only when security enforcement is disabled for development.
 DEMO_USER_EMAIL = "tonytrieu.dev@gmail.com"
 
 # Cap concurrent agent runs so a burst can't blow through the LLM provider's rate limits.
 MAX_CONCURRENT_AGENT_RUNS = 2
 
-# Per-IP request cap on the expensive routes (/plan, /flights/search) — both spend real,
+# Per-client request cap on the expensive routes (/plan, /flights/search) — both spend real,
 # scarce third-party quota (LLM requests, the one-time SearchApi search allotment).
 RATE_LIMIT_MAX_REQUESTS = 10
 RATE_LIMIT_WINDOW_SECONDS = 60
@@ -94,27 +99,54 @@ RATE_LIMIT_WINDOW_SECONDS = 60
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=(".env", "../.env"), env_file_encoding="utf-8", extra="ignore"
+        env_file=(".env", "../.env"), env_file_encoding="utf-8", extra="ignore", populate_by_name=True
     )
 
-    cerebras_api_key: SecretStr
-    gemini_api_key: SecretStr | None = None
+    cerebras_api_key: SecretStr = Field(validation_alias=CEREBRAS_API_KEY_ENVIRONMENT)
     searchapi_api_key: SecretStr
     tavily_api_key: SecretStr
     database_url: str
 
     use_live_flight_api: bool = True
     frontend_origin: str = "http://localhost:5173"
+    # Retained so old deployments fail startup instead of silently accepting an unsafe setting.
+    zero_trust_enforced: bool = True
+    # No explicit secret -> a fresh per-process key, so an out-of-the-box run is enforced AND
+    # unforgeable (nothing in the repo can sign a valid token). A real deployment sets an explicit
+    # secret so tokens survive a restart and are shared across processes.
+    zero_trust_signing_secret: SecretStr = Field(
+        default_factory=lambda: SecretStr(secrets.token_urlsafe(32))
+    )
+
+    device_gateway_secret: SecretStr | None = None
 
     slack_bot_token: SecretStr | None = None
     slack_signing_secret: SecretStr | None = None
     slack_approvals_channel_id: str | None = None
 
+    # No DSN -> Sentry stays off, so local runs and tests need no Sentry project.
+    sentry_dsn: SecretStr | None = None
     @computed_field
     @property
     def dbos_database_url(self) -> str:
         """DBOS speaks the plain (psycopg/sync) Postgres URL, not the asyncpg dialect."""
         return self.database_url.replace("postgresql+asyncpg://", "postgresql://")
+
+    @model_validator(mode="after")
+    def _reject_weak_signing_secret(self) -> "Settings":
+        if not self.zero_trust_enforced:
+            raise ValueError("Security enforcement cannot be disabled")
+        signing_secret = self.zero_trust_signing_secret.get_secret_value()
+        if self.zero_trust_enforced and len(signing_secret.encode()) < 32:
+            raise ValueError(
+                "ZERO_TRUST_SIGNING_SECRET must be at least 32 bytes when "
+                "ZERO_TRUST_ENFORCED is enabled"
+            )
+        if self.device_gateway_secret is not None and len(self.device_gateway_secret.get_secret_value().encode()) < 32:
+            raise ValueError(
+                "DEVICE_GATEWAY_SECRET must be at least 32 bytes when configured"
+            )
+        return self
 
 
 @lru_cache

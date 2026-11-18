@@ -18,15 +18,17 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
-from app.config import BOOKING_TTL_MINUTES
+from app.config import BOOKING_TTL_MINUTES, FLIGHT_CACHE_TTL_MINUTES
 from app.models import (
     BookingTransition,
     FlightSearchResult,
     HITLBookingLog,
     TripRequest,
     User,
+    SecuritySession,
     utcnow,
 )
+from app.request_context import correlation_id
 from app.schemas import ErrorCode
 from app.state import ALLOWED_TRANSITIONS, BookingState, BookingTransitionReason
 
@@ -76,6 +78,7 @@ def _record_transition(
             to_state=to_state,
             reason=reason.value,
             actor_user_id=actor_user_id,
+            correlation_id=correlation_id(),
         )
     )
     booking.state = to_state
@@ -83,7 +86,10 @@ def _record_transition(
 
 async def _lock_booking(session: AsyncSession, log_id: int) -> HITLBookingLog | None:
     result = await session.execute(
-        select(HITLBookingLog).where(col(HITLBookingLog.id) == log_id).with_for_update()
+        select(HITLBookingLog)
+        .where(col(HITLBookingLog.id) == log_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     return result.scalar_one_or_none()
 
@@ -112,11 +118,19 @@ async def request_booking(
     if existing is not None:
         return existing
 
+    if flight.created_at < utcnow() - timedelta(minutes=FLIGHT_CACHE_TTL_MINUTES):
+        raise BookingError(
+            ErrorCode.BOOKING_EXPIRED,
+            409,
+            f"This fare was quoted at {flight.created_at:%Y-%m-%dT%H:%MZ}; "
+            "search again for current prices before requesting a booking.",
+        )
+
     booking = HITLBookingLog(
         trip_request_id=trip_id,
         flight_search_result_id=flight_search_result_id,
         requested_by_user_id=trip.user_id,
-        expires_at=utcnow() + timedelta(minutes=BOOKING_TTL_MINUTES),
+        expires_at=flight.created_at + timedelta(minutes=BOOKING_TTL_MINUTES),
     )
     session.add(booking)
     try:
@@ -180,6 +194,7 @@ async def list_bookings_with_transitions_for_user(
             select(HITLBookingLog)
             .where(col(HITLBookingLog.requested_by_user_id) == user_id)
             .order_by(col(HITLBookingLog.created_at).desc())
+            .limit(100)
         )
     )
     if not bookings:
@@ -197,10 +212,18 @@ async def list_bookings_with_transitions_for_user(
     ]
 
 
-async def confirm_booking(session: AsyncSession, log_id: int) -> HITLBookingLog:
+async def confirm_booking(
+    session: AsyncSession, log_id: int, *, actor_user_id: int | None = None,
+    tenant_id: str | None = None, session_id: str | None = None,
+) -> HITLBookingLog:
     booking = await _lock_booking(session, log_id)
     if booking is None:
         raise BookingError(ErrorCode.BOOKING_NOT_FOUND, 404, f"No booking log {log_id}.")
+    if actor_user_id is not None and tenant_id is not None and session_id is not None:
+        await _verify_execution_principal(
+            session, booking, actor_user_id=actor_user_id,
+            tenant_id=tenant_id, session_id=session_id,
+        )
     if booking.state == BookingState.CONFIRMED:
         return booking  # idempotent: a double-clicked confirm is expected human behavior
     if booking.state == BookingState.PENDING_USER_CONFIRMATION and _is_expired(booking):
@@ -229,11 +252,20 @@ async def confirm_booking(session: AsyncSession, log_id: int) -> HITLBookingLog:
 
 
 async def execute_booking(
-    session: AsyncSession, log_id: int, fetch_options: BookingOptionsFetcher
+    session: AsyncSession,
+    log_id: int,
+    fetch_options: BookingOptionsFetcher,
+    *,
+    actor_user_id: int,
+    tenant_id: str,
+    session_id: str,
 ) -> HITLBookingLog:
     booking = await _lock_booking(session, log_id)
     if booking is None:
         raise BookingError(ErrorCode.BOOKING_NOT_FOUND, 404, f"No booking log {log_id}.")
+    await _verify_execution_principal(
+        session, booking, actor_user_id=actor_user_id, tenant_id=tenant_id, session_id=session_id
+    )
     if booking.state == BookingState.EXECUTED:
         return booking  # idempotent: the losing racer reuses the stored result, no second fetch
     if booking.state == BookingState.CONFIRMED and _is_expired(booking):
@@ -251,14 +283,20 @@ async def execute_booking(
 
     flight = await session.get(FlightSearchResult, booking.flight_search_result_id)
     assert flight is not None, "booking references a flight row that no longer exists"
-    # The human's confirm-then-execute decision is already real and structural (see
-    # DECISIONS.md); booking_options are supplementary airline/OTA links, not the thing being
-    # gated. An upstream hiccup fetching them must not block the execute itself — degrade
-    # honestly (no links) rather than fabricate a link or block a real, human-confirmed action.
     try:
         booking_options = await fetch_options(flight)
-    except Exception:
-        booking_options = []
+    except Exception as error:
+        raise BookingError(
+            ErrorCode.BOOKING_OPTIONS_UNAVAILABLE,
+            503,
+            "Booking options are temporarily unavailable; please retry.",
+        ) from error
+    if not booking_options:
+        raise BookingError(
+            ErrorCode.BOOKING_OPTIONS_UNAVAILABLE,
+            503,
+            "No booking options are available yet; please retry.",
+        )
     booking.booking_options = booking_options
     booking.booking_reference = f"TA-{booking.id}-{uuid.uuid4().hex[:10].upper()}"
     booking.executed_at = utcnow()
@@ -273,10 +311,56 @@ async def execute_booking(
     return booking
 
 
-async def cancel_booking(session: AsyncSession, log_id: int) -> HITLBookingLog:
+async def _verify_execution_principal(
+    session: AsyncSession,
+    booking: HITLBookingLog,
+    *,
+    actor_user_id: int,
+    tenant_id: str,
+    session_id: str,
+) -> None:
+    security_session = await session.scalar(
+        select(SecuritySession)
+        .where(col(SecuritySession.session_id) == session_id)
+        .with_for_update()
+    )
+    user = await session.get(User, actor_user_id)
+    trip = await session.get(TripRequest, booking.trip_request_id)
+    if (
+        security_session is None
+        or user is None
+        or trip is None
+        or security_session.user_id != actor_user_id
+        or security_session.tenant_id != tenant_id
+        or security_session.revoked_at is not None
+        or security_session.expires_at <= utcnow()
+        or not security_session.mfa_verified
+        or user.disabled
+        or not user.mfa_enabled
+        or user.tenant_id != tenant_id
+        or user.role not in {"traveler", "admin"}
+        or trip.user_id != actor_user_id
+        or trip.user_id != booking.requested_by_user_id
+    ):
+        raise BookingError(
+            ErrorCode.AUTHENTICATION_REQUIRED,
+            401,
+            "The booking session is no longer authorized; authenticate again.",
+        )
+
+
+async def cancel_booking(
+    session: AsyncSession, log_id: int, *, actor_user_id: int | None = None,
+    tenant_id: str | None = None, session_id: str | None = None,
+) -> HITLBookingLog:
     booking = await _lock_booking(session, log_id)
     if booking is None:
         raise BookingError(ErrorCode.BOOKING_NOT_FOUND, 404, f"No booking log {log_id}.")
+    if actor_user_id is not None and tenant_id is not None and session_id is not None:
+        await _verify_execution_principal(
+            session, booking, actor_user_id=actor_user_id,
+            tenant_id=tenant_id, session_id=session_id,
+        )
     if booking.state == BookingState.CANCELLED:
         return booking  # idempotent
     if BookingState.CANCELLED not in ALLOWED_TRANSITIONS[booking.state]:

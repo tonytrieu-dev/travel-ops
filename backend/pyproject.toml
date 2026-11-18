@@ -8,36 +8,39 @@ dependencies = [
     "uvicorn[standard]>=0.34",
     "pydantic>=2.10",
     "pydantic-settings>=2.7",
-    "pydantic-ai-slim[google,openai]>=2.9",
+    "pydantic-ai-slim[openai]>=2.9",
     "dbos>=1.0",
     "sqlmodel>=0.0.22",
     "asyncpg>=0.30",
     "alembic>=1.14",
     "httpx>=0.28",
-    "python-multipart>=0.0.32",
+    "python-multipart>=0.0.20",
+    "baml-bridge>=0.23.0",
+    "sentry-sdk[fastapi]>=2.0",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.25",
-    "pytest-bdd>=8.1",
-    "pydantic-evals>=2.9",
-    "pyyaml>=6.0",
     "pyrefly>=0.16",
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["app", "evals", "tests"]
+known-first-party = ["app", "tests"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "real_planner: exercise planner execution instead of the route harness runner",
+    "no_database: test does not require the PostgreSQL integration fixture",
+]
 
 [tool.pyrefly]
-project-includes = ["app", "evals", "tests"]
+project-includes = ["app", "tests"]
 
 # SQLModel declares __tablename__ on its base in a way pyrefly reads as a descriptor, so every
 # table model trips bad-override. It is a pure framework artifact, not a real override bug.

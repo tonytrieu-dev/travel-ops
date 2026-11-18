@@ -1,0 +1,107 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: travel_owner
+      POSTGRES_PASSWORD: ${OWNER_DATABASE_PASSWORD:?required}
+      POSTGRES_DB: travel_agent
+      RUNTIME_DATABASE_PASSWORD: ${RUNTIME_DATABASE_PASSWORD:?required}
+    volumes:
+      - zero_trust_database:/var/lib/postgresql/data
+      - ./deploy/database-init.sh:/docker-entrypoint-initdb.d/roles.sh:ro
+    networks: [database]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U travel_owner -d travel_agent"]
+      interval: 5s
+      retries: 20
+  migrate:
+    build: ./backend
+    environment: &provisioning_environment
+      CEREBRAS_API_KEY: provisioning
+      SEARCHAPI_API_KEY: provisioning
+      TAVILY_API_KEY: provisioning
+      DATABASE_URL: postgresql+asyncpg://travel_owner:${OWNER_DATABASE_PASSWORD:?required}@postgres/travel_agent
+    command: [alembic, upgrade, head]
+    networks: [database]
+    depends_on:
+      postgres:
+        condition: service_healthy
+  enroll:
+    profiles: [provisioning]
+    build: ./backend
+    environment:
+      <<: *provisioning_environment
+      PROVISIONING_DIRECTORY: /provisioning
+    volumes:
+      - type: bind
+        source: ./.identity-provisioning
+        target: /provisioning
+        bind:
+          create_host_path: false
+    entrypoint: [python, -m, scripts.enroll_identity]
+    networks: [database]
+    depends_on:
+      grants:
+        condition: service_completed_successfully
+  grants:
+    image: postgres:16
+    environment:
+      PGPASSWORD: ${OWNER_DATABASE_PASSWORD:?required}
+    volumes:
+      - ./deploy/runtime-grants.sql:/runtime-grants.sql:ro
+    command: [psql, -h, postgres, -U, travel_owner, -d, travel_agent, -v, ON_ERROR_STOP=1, -f, /runtime-grants.sql]
+    networks: [database]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+  api:
+    build: ./backend
+    environment:
+      CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:?required}
+      SEARCHAPI_API_KEY: ${SEARCHAPI_API_KEY:?required}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:?required}
+      ZERO_TRUST_SIGNING_SECRET: ${ZERO_TRUST_SIGNING_SECRET:?required}
+      DATABASE_URL: postgresql+asyncpg://travel_runtime:${RUNTIME_DATABASE_PASSWORD:?required}@postgres/travel_agent
+      FRONTEND_ORIGIN: https://localhost:8443
+      ZERO_TRUST_ENFORCED: "true"
+      DEVICE_GATEWAY_SECRET: ${DEVICE_GATEWAY_SECRET:?required}
+    networks: [application, database, outbound]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/auth/config', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    depends_on:
+      grants:
+        condition: service_completed_successfully
+  gateway:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.gateway
+    user: "${DEVICE_CERTIFICATE_USER_ID:-1000}:${DEVICE_CERTIFICATE_GROUP_ID:-1000}"
+    environment:
+      DEVICE_GATEWAY_SECRET: ${DEVICE_GATEWAY_SECRET:?required}
+      NGINX_ENVSUBST_FILTER: DEVICE_GATEWAY_SECRET
+    volumes:
+      - ./.device-certificates/ca.crt:/certificates/ca.crt:ro
+      - ./.device-certificates/server.crt:/certificates/server.crt:ro
+      - ./.device-certificates/server.key:/certificates/server.key:ro
+    ports: ["127.0.0.1:8443:8443"]
+    networks: [ingress, application]
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, nc, -z, 127.0.0.1, "8443"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+networks:
+  ingress: {}
+  application:
+    internal: true
+  database:
+    internal: true
+  outbound: {}
+volumes:
+  zero_trust_database: {}

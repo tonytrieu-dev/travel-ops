@@ -1,6 +1,6 @@
 """Slack interactivity callback for the booking-approval message. Verifies Slack's webhook
 signature before doing anything else, then approves or rejects the booking named by the
-clicked button. Never executes a booking here — see docs/DECISIONS.md for why.
+clicked button. Never executes a booking here.
 """
 
 import json
@@ -11,12 +11,12 @@ from fastapi.responses import JSONResponse, Response
 
 from app.adapters.slack_hitl import (
     resolve_block_action,
+    slack_configured,
     update_approval_message,
     verify_slack_signature,
 )
-from app.config import get_settings
+from app import config
 from app.db import get_session_factory
-from app.routes.connectors import slack_configured
 from app.schemas import SlackAuthErrorOut
 
 router = APIRouter(prefix="/api/slack", tags=["slack"])
@@ -31,7 +31,7 @@ _UNCONFIGURED_OR_UNSIGNED = JSONResponse(
     responses={401: {"model": SlackAuthErrorOut}},
 )
 async def slack_interactions(request: Request) -> Response:
-    settings = get_settings()
+    settings = config.get_settings()
     if not slack_configured(settings):
         return _UNCONFIGURED_OR_UNSIGNED
     assert settings.slack_signing_secret is not None

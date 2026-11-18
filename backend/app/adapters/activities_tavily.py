@@ -1,10 +1,9 @@
 """Tavily activity-research adapter. Tolerant: errors/empty results return [], never fabricated."""
 
-import json
 import logging
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Protocol
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -53,27 +52,28 @@ class TavilyActivityProvider:
                 )
             response.raise_for_status()
             body = response.json()
-        except httpx.HTTPError as error:
+        except (httpx.HTTPError, TypeError, ValueError, KeyError) as error:
             logger.warning("tavily web_search failed: %r for query=%r", error, query)
             return []
 
-        return [
-            NormalizedActivityResult(
-                title=result.get("title", ""),
-                url=result.get("url", ""),
-                content=result.get("content", "").strip(),
-                score=float(result.get("score", 0.0)),
-            )
-            for result in body.get("results", [])
-        ]
+        results = body.get("results", []) if isinstance(body, dict) else []
+        if not isinstance(results, list):
+            return []
+        try:
+            return [
+                NormalizedActivityResult(
+                    title=result.get("title", ""),
+                    url=result.get("url", ""),
+                    content=result.get("content", "").strip(),
+                    score=float(result.get("score", 0.0)),
+                )
+                for result in results
+                if isinstance(result, dict) and _is_safe_source_url(result.get("url"))
+            ]
+        except (AttributeError, TypeError, ValueError):
+            logger.warning("tavily web_search returned malformed results for query=%r", query)
+            return []
 
 
-class RecordedActivityProvider:
-    def __init__(self, cassette_path: Path) -> None:
-        self._cassette_path = cassette_path
-
-    async def search(
-        self, query: str, max_results: int = 5
-    ) -> list[NormalizedActivityResult]:
-        results = json.loads(self._cassette_path.read_text())
-        return [NormalizedActivityResult(**result) for result in results[:max_results]]
+def _is_safe_source_url(value: object) -> bool:
+    return isinstance(value, str) and urlsplit(value).scheme == "https" and bool(urlsplit(value).netloc)

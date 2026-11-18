@@ -6,21 +6,24 @@ import {
   executeBooking,
   getBooking,
   getConnectors,
+  getAuthConfig,
   requestBooking,
 } from "../api/client"
 import type { BookingLogOut, FlightOfferOut, TripRequestOut } from "../api/types"
+import { useRequestLifetime } from "../hooks/useRequestLifetime"
 
 interface BookingModuleProps {
   trip: TripRequestOut
   selectedOffer: FlightOfferOut | null
   onSearchAgain: () => void
+  onPendingChange?: (pending: boolean) => void
 }
 
 const POLL_INTERVAL_MS = 1_000
 
 // SearchApi's real booking link isn't a plain URL: booking_request.url is Google's redirect
 // endpoint, and it only resolves to the real airline/OTA checkout when POSTed with post_data
-// as the body — a GET (plain <a href>) 404s. post_data is itself a urlencoded "key=value" pair.
+// as the body. A GET (plain <a href>) 404s. post_data is itself a urlencoded "key=value" pair.
 function bookingFormFields(postData: string): [string, string][] {
   return Array.from(new URLSearchParams(postData).entries())
 }
@@ -36,7 +39,7 @@ function bookingOptionPrice(option: Record<string, unknown>): number {
 }
 
 // SearchApi returns one booking_option per fare class/OTA, so the same provider often appears
-// several times — collapse to the cheapest option per provider instead of a wall of duplicate
+// several times. Collapse to the cheapest option per provider instead of a wall of duplicate
 // provider checkout buttons.
 function cheapestPerProvider(options: Record<string, unknown>[]): Record<string, unknown>[] {
   const cheapestByLabel = new Map<string, Record<string, unknown>>()
@@ -60,31 +63,36 @@ function searchAgainMessage(state: string): string | null {
   return null
 }
 
-export function BookingModule({ trip, selectedOffer, onSearchAgain }: BookingModuleProps) {
+export function BookingModule({ trip, selectedOffer, onSearchAgain, onPendingChange }: BookingModuleProps) {
   const [bookingLog, setBookingLog] = useState<BookingLogOut | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [announcement, setAnnouncement] = useState("")
   const [isSlackApprovalEnabled, setIsSlackApprovalEnabled] = useState<boolean | null>(null)
   const previousStateRef = useRef<string | null>(null)
+  const { captureRequest, invalidateRequests } = useRequestLifetime()
 
-  // Poll the server for real state while a booking is open and not yet terminal — the panel
-  // never fabricates a transition the server hasn't confirmed.
   useEffect(() => {
     if (!bookingLog || isLoading) return
     const terminal = ["EXECUTED", "CANCELLED", "EXPIRED"]
     if (terminal.includes(bookingLog.state)) return
 
+    let isPolling = false
     const poll = setInterval(async () => {
+      if (isPolling) return
+      isPolling = true
+      const request = captureRequest()
       try {
-        const refreshed = await getBooking(bookingLog.id)
-        setBookingLog(refreshed)
+        const refreshed = await getBooking(bookingLog.id, request.signal)
+        if (request.isCurrent()) setBookingLog(refreshed)
       } catch {
-        // Transient poll failures are not surfaced — the next successful poll self-corrects.
+        // Transient poll failures are not surfaced. The next successful poll self-corrects.
+      } finally {
+        isPolling = false
       }
     }, POLL_INTERVAL_MS)
     return () => clearInterval(poll)
-  }, [bookingLog, isLoading])
+  }, [bookingLog, isLoading, captureRequest])
 
   useEffect(() => {
     if (bookingLog && bookingLog.state !== previousStateRef.current) {
@@ -94,10 +102,15 @@ export function BookingModule({ trip, selectedOffer, onSearchAgain }: BookingMod
   }, [bookingLog])
 
   useEffect(() => {
-    getConnectors()
-      .then((connectors) =>
-        setIsSlackApprovalEnabled(connectors.slack.configured && connectors.slack.enabled),
-      )
+    getAuthConfig()
+      .then(async ({ enforced }) => {
+        if (enforced) {
+          setIsSlackApprovalEnabled(false)
+          return
+        }
+        const connectors = await getConnectors()
+        setIsSlackApprovalEnabled(connectors.slack.configured && connectors.slack.enabled)
+      })
       .catch(() => setIsSlackApprovalEnabled(false))
   }, [])
 
@@ -125,7 +138,9 @@ export function BookingModule({ trip, selectedOffer, onSearchAgain }: BookingMod
     : []
 
   const runAction = async (action: () => Promise<BookingLogOut>) => {
+    invalidateRequests()
     setIsLoading(true)
+    onPendingChange?.(true)
     setErrorMessage(null)
     try {
       const updated = await action()
@@ -138,7 +153,7 @@ export function BookingModule({ trip, selectedOffer, onSearchAgain }: BookingMod
           try {
             setBookingLog(await getBooking(bookingLog.id))
           } catch {
-            // Fall through — errorMessage already reflects the expiry.
+            // Fall through. errorMessage already reflects the expiry.
           }
         }
       } else {
@@ -146,6 +161,7 @@ export function BookingModule({ trip, selectedOffer, onSearchAgain }: BookingMod
       }
     } finally {
       setIsLoading(false)
+      onPendingChange?.(false)
     }
   }
 
@@ -191,12 +207,12 @@ export function BookingModule({ trip, selectedOffer, onSearchAgain }: BookingMod
       {bookingLog?.state === "PENDING_USER_CONFIRMATION" && isSlackApprovalEnabled !== false && (
         <p className="mt-4 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
           {isSlackApprovalEnabled
-            ? "Waiting for approval in Slack. Use the Slack message to approve or reject this flight."
+            ? "Slack approvals are enabled. You can also approve or cancel this flight here."
             : "Checking approval channel…"}
         </p>
       )}
 
-      {bookingLog?.state === "PENDING_USER_CONFIRMATION" && !isSlackApprovalEnabled && (
+      {bookingLog?.state === "PENDING_USER_CONFIRMATION" && (
         <div className="mt-4 flex gap-3">
           <button
             type="button"

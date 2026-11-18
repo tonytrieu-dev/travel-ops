@@ -85,7 +85,7 @@ export function AirportField({ label, value, onChange, placeholder }: AirportFie
             ))
           ) : (
             <li className="px-3 py-2 text-slate-500">
-              No match in our list — you can still enter the exact 3-letter airport code.
+              No match in our list. You can still enter the exact 3-letter airport code.
             </li>
           )}
         </ul>

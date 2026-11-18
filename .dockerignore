@@ -1,0 +1,15 @@
+.git
+.env
+.env.*
+!.env.example
+.device-certificates
+.device-authority
+.identity-provisioning
+**/node_modules
+**/.venv*
+**/__pycache__
+frontend/dist
+.agents
+.claude
+agent
+transcript.json
