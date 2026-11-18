@@ -7,6 +7,7 @@ from time import monotonic, sleep
 
 from sqlalchemy import text
 
+from app.models import ExecutionEvent, ExecutionEventKind
 from tests.db_helpers import get_flight_search_results, get_trip, run_db, seed_trip
 
 
@@ -166,3 +167,33 @@ def test_execution_history_pages_owned_runs_with_matching_details(client) -> Non
     assert page["next_before_run_id"] is None
     for query in ("page_size=0", "page_size=101", "before_run_id=-1"):
         assert client.get(f"/api/execution?{query}").status_code == 422
+
+
+def test_trip_execution_caps_flat_event_history(client) -> None:
+    trip = client.post("/api/trips", json=_trip_payload()).json()
+
+    async def seed_events(session):
+        session.add_all(
+            [
+                ExecutionEvent(
+                    trip_request_id=trip["id"],
+                    seq=sequence,
+                    kind=ExecutionEventKind.API_CALL,
+                    name=f"event-{sequence}",
+                    status="ok",
+                    detail="test event",
+                )
+                for sequence in range(1, 1002)
+            ]
+        )
+        await session.commit()
+
+    run_db(seed_events)
+
+    response = client.get(f"/api/trips/{trip['id']}/execution")
+
+    assert response.status_code == 200, response.text
+    events = response.json()["events"]
+    assert len(events) == 1000
+    assert events[0]["seq"] == 1
+    assert events[-1]["seq"] == 1000

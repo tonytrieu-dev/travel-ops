@@ -362,6 +362,7 @@ async def get_execution_panel(
             select(ExecutionEvent)
             .where(col(ExecutionEvent.trip_request_id) == trip_id)
             .order_by(col(ExecutionEvent.seq))
+            .limit(1000)
         )
     )
     return runs_with_details, events

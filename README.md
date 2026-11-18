@@ -52,8 +52,6 @@ and private service networks; see [deployment instructions](#running-it). See th
   incident response) map to concrete controls, and what is deliberately out of scope.
 - [Zero-trust demo](#zero-trust-demo): deterministic identities, MFA, attacks, containment, and
   security-operations queries.
-- [Security evaluation](docs/SECURITY_EVALUATION.md): PostgreSQL validation, repeatable scenarios,
-  and a modest local latency comparison.
 
 There is no public hosted demo yet. Run the local stack below, or use the walkthrough as a short
 recorded demo script. The project intentionally does not present itself as a production travel
@@ -98,10 +96,10 @@ tenant-scoped request, MFA-gated operator access, token/session rejection,
 browser segment spoof rejection, denials triggering session revocation, and the
 security-operations event/incident query. These are throwaway demo credentials; never reuse them.
 
-For the repeatable PostgreSQL demonstration, including authorized booking, cross-tenant denial,
-tampered tokens, revocation, and completed planner exchanges retained after a later model failure, follow
-the [evaluation commands](docs/SECURITY_EVALUATION.md). That harness uses isolated test data and
-stubbed external providers; it does not purchase flights or consume model/search quota.
+For the repeatable PostgreSQL demonstration, run the security tests in the [tests](#5-tests)
+section. They cover authorized booking, cross-tenant denial, tampered tokens, revocation, and
+completed planner exchanges retained after a later model failure. They use isolated test data and
+stubbed external providers; they do not purchase flights or consume model/search quota.
 If the booking-options provider is unavailable, execution stays confirmed and the user can retry;
 the app does not create a terminal handoff without checkout links.
 
@@ -119,9 +117,8 @@ Use three scenarios to show the bounded prototype:
    a database-owner application role should fail the audit-protection assessment.
 
 The [findings document](docs/ZERO_TRUST_FINDINGS.md#presentation-scope-and-three-scenario-demonstration)
-maps these scenarios to actual tests and explains the before/after design. With
-an isolated PostgreSQL test database prepared as described in
-[Security evaluation](docs/SECURITY_EVALUATION.md#repeat-the-validation), run from `backend`:
+maps these scenarios to actual tests and explains the before/after design. With an isolated
+PostgreSQL test database, run from `backend`:
 
 ```bash
 uv run pytest -q tests/test_security_integration.py tests/test_compliance.py
@@ -419,8 +416,7 @@ uv run pytest -q -m no_database
 
 Use a migrated, disposable PostgreSQL database whose name ends in `_test` or `_testing`,
 and set `TEST_DATABASE_URL` to its asyncpg URL. Database tests truncate their tables between
-cases; never point them at application data. See the
-[database preparation commands](docs/SECURITY_EVALUATION.md#repeat-the-validation).
+cases; never point them at application data.
 
 Latest local validation (2026-11-17): all 158 backend tests passed against a freshly migrated,
 disposable PostgreSQL 14.24 database. All eight frontend test files, backend type checking,
