@@ -12,28 +12,11 @@ Booking approval and execution stay outside the model's tools, behind applicatio
 policy and a human-approval state machine. The system returns checkout links;
 it does not purchase flights.
 
-The [architecture findings](docs/ZERO_TRUST_FINDINGS.md) preserve the baseline,
-before/after evidence, design limits and three-scenario security demonstration.
-
 ## Zero-trust architecture
 
 The application requires verified sessions on protected routes. The isolated deployment adds
 mutual TLS and private service networks. See the [architecture](docs/ARCHITECTURE.md) for the
 security model, trust boundaries, and known limits.
-
-## Start here
-
-- [Architecture](docs/ARCHITECTURE.md): the system boundary and critical request path.
-- [Zero Trust control plane](docs/ARCHITECTURE.md#zero-trust-enterprise-network-overlay): how the
-  five required areas (identity and access management, MFA, segmentation, continuous monitoring,
-  incident response) map to concrete controls, and what is deliberately out of scope.
-- [Zero-trust demo](#zero-trust-demo): deterministic identities, MFA, attacks, containment, and
-  security-operations queries.
-
-There is no public hosted demo yet. Run the local stack below, or use the walkthrough as a short
-recorded demo script. The project intentionally does not present itself as a production travel
-service: it does not purchase flights and has not had production-scale load testing or an
-independent security audit.
 
 ## Zero-trust demo
 
@@ -51,27 +34,8 @@ baml generate
 uv run python -m scripts.security_demo
 ```
 
-Stop API writers while applying migration `5d9f1b3c4e67`; deploy the updated API
-and frontend together. This migration clears fixed-salt password hashes and revokes their sessions.
-It preserves account ownership and modern password hashes. Cleared hashes cannot be
-restored by downgrade; those accounts must enroll a new password.
-For an existing account left with an empty password hash, run
-`uv run python -m scripts.enroll_identity --email <email> --provisioning-file <private-new-file>`
-from `backend` as a trusted database operator. This provisions a unique authenticator and
-revokes previous sessions while preserving ownership and policy. Import the private URI into
-an authenticator and remove the file. Migration `6e0a2c4d8f10` retires the public shared TOTP
-secret and its sessions; already password-enrolled accounts need `--reset-mfa` to provision
-a replacement authenticator. Synthetic demo seeds explicitly retain public demo credentials.
-Login, MFA, and protected requests require the registered client certificate through the
-gateway described in [deployment instructions](#running-it).
-
-The synthetic accounts all use `demo-password` and the TOTP secret
-`JBSWY3DPEHPK3PXP` (the script calculates the current six-digit code).
-Each identity can consume a code only once; wait for the next 30-second code before
-repeating MFA sign-in, including when rerunning the demo. The demo shows a valid
-tenant-scoped request, MFA-gated operator access, token/session rejection,
-browser segment spoof rejection, denials triggering session revocation, and the
-security-operations event/incident query. These are throwaway demo credentials; never reuse them.
+The synthetic seed uses public demo credentials for a disposable local walkthrough. Do not reuse
+them. Login, MFA, and protected requests require the registered client certificate.
 
 For the repeatable PostgreSQL demonstration, run the security tests in the [tests](#5-tests)
 section. They cover authorized booking, cross-tenant denial, tampered tokens, revocation, and
@@ -79,16 +43,6 @@ completed planner exchanges retained after a later model failure. They use isola
 stubbed external providers; they do not purchase flights or consume model/search quota.
 If the booking-options provider is unavailable, execution stays confirmed and the user can retry;
 the app does not create a terminal handoff without checkout links.
-
-## Project status and limitations
-
-This is a portfolio and reference implementation intended for local development and evaluation.
-It is not a production travel service. It has no independent security audit or production-scale
-load test. The booking flow returns third-party checkout links and does not reserve, purchase, or
-hold a fare.
-
-See the [findings](docs/ZERO_TRUST_FINDINGS.md) and [architecture](docs/ARCHITECTURE.md) for
-security evidence and detailed limitations.
 
 ## What it does
 
@@ -129,9 +83,6 @@ Availability, pricing, and quotas are controlled by those providers and can chan
 
 ## Running it
 
-Navigation follows the verified browser session's role. The sidebar has a separate button for
-each available view and can collapse to icons; button labels remain available to assistive tools.
-
 | Role | Available views |
 | --- | --- |
 | Traveler | Plan a trip, Your trips |
@@ -139,12 +90,6 @@ each available view and can collapse to icons; button labels remain available to
 | Security operator | Connectors, Security monitoring (verified MFA required) |
 | Platform operator | Security monitoring (verified MFA required) |
 | Admin | All views; Connectors and Security monitoring require verified MFA |
-
-History collection APIs enforce dedicated role permissions, and security/connector APIs enforce
-role and MFA policy. Hidden panels are not mounted or fetched. Individual trip activity and
-booking actions still require ownership. Flight search prefers nonstop round-trip options and
-falls back to connecting offers when no nonstop outbound candidate can form a complete round
-trip. The UI labels stops separately for each direction and keeps connecting offers selectable.
 
 The enforced deployment uses `compose.zero-trust.yml`. It builds the frontend and backend,
 serves the browser application through an HTTPS gateway, and keeps the API and PostgreSQL
@@ -185,14 +130,9 @@ for that exact ID from the repository root:
 python3 deploy/issue-device.py <registered-device-id>
 ```
 
-The script keeps the local certificate authority and signing key in the ignored
-`.device-authority/` directory. Only the public CA certificate, localhost server material,
-and client material go in `.device-certificates/`. Never mount or distribute `.device-authority/`.
-For an existing installation, move `ca.key`, `ca.crt`, and `ca.srl` into a private
-`.device-authority/` directory (mode 700), then copy `ca.crt` back to `.device-certificates/`.
-Keep the existing authority; replacing it invalidates issued certificates. For the
-synthetic walkthrough, issue `device-a-traveler` and `device-a-operator` as shown in the
-[demo commands](#zero-trust-demo).
+The script stores the local certificate authority and signing key in the ignored
+`.device-authority/` directory. Keep that directory private. For the synthetic walkthrough,
+issue `device-a-traveler` and `device-a-operator` as shown in the [demo commands](#zero-trust-demo).
 
 Import the device's `.p12` file into the browser's client-certificate store, using the password
 in its matching `.password` file. Trust `ca.crt` for the local HTTPS server. Keep private keys
@@ -200,20 +140,9 @@ and password files private, and never distribute `ca.key`: anyone holding that k
 another trusted device certificate. The gateway receives only the CA certificate and its own
 server certificate and key.
 
-The gateway runs without root privileges. On Linux, set `DEVICE_CERTIFICATE_USER_ID` and
-`DEVICE_CERTIFICATE_GROUP_ID` in `.env` to `id -u` and `id -g` for the certificate owner so it
-can read the private server key without broadening file permissions. Both default to 1000.
-
 The gateway validates the client certificate and overwrites device-identity headers. The API
 checks the gateway secret and matches the certified device ID to the account or session during
 login, MFA, and protected requests. A copied access token alone cannot satisfy this boundary.
-These are exportable software keys, so the check establishes key possession rather than device
-health or hardware attestation.
-
-Device and server certificates expire after seven days. This small deployment has no
-per-certificate revocation service. Urgent revocation requires replacing the CA, reissuing the
-remaining devices, and restarting the gateway. A sustained deployment needs managed certificate
-renewal and revocation.
 
 ### 3. Start the isolated stack
 
@@ -231,31 +160,8 @@ docker compose -f compose.zero-trust.yml run --rm migrate python -m scripts.seed
 Complete the environment configuration above first. Skip certificate issuance for devices already
 issued. Import the traveler's `.p12` into Current User / Personal and the local `ca.crt` into
 Current User / Trusted Root Certification Authorities, then visit `https://localhost:8443`.
-Add the demo TOTP setup secret to an authenticator app; the sign-in form takes its generated
-six-digit code, not the setup secret. Compose applies migrations automatically and keeps the
-database private, so the browser walkthrough does not require host-side `uvicorn` or Alembic.
-
-```bash
-docker compose -f compose.zero-trust.yml up --build -d
-```
-
-Compose starts PostgreSQL, applies migrations using the owner credential, grants the runtime
-role its permissions, and then starts the API and gateway. The backend build verifies the
-published SHA-256 checksum of BAML 0.23.0 before generating the ignored SDK. Python dependencies
-are installed from locked wheels without build scripts; frontend dependencies skip install
-scripts. The API and gateway run as non-root users, and the gateway listens on container port
-8443 while the browser URL remains `https://localhost:8443`.
-The frontend is built with `/api` as its API URL and served from the same HTTPS origin.
-
-Only the gateway publishes a host port, at `https://localhost:8443`. Gateway and API share an
-internal application network. The API and provisioning containers join the separate database
-network; the gateway does not. The API also has an outbound network for model and search
-provider calls. Keep the API and PostgreSQL ports private when changing this configuration.
-
-The owner password is supplied only to provisioning containers. The runtime role can read and
-append protected audit evidence but cannot update or delete it, truncate its tables, disable
-its triggers, or drop those tables. It owns the DBOS schema so durable execution can initialize
-its system tables without owning the application's tables. Permission grants run after migrations.
+Add the demo TOTP setup secret to an authenticator app. The sign-in form takes its generated
+six-digit code, not the setup secret.
 
 ### 4. Enroll accounts and verify access
 
@@ -268,21 +174,11 @@ sh deploy/enroll-identity.sh \
 ```
 
 The command prompts for a password and writes a unique authenticator provisioning URI to
-`.identity-provisioning/enrollment-uri` on the host. The file must not already exist. Transfer it
-securely to the account owner, import the URI into an authenticator, and remove the file after
-enrollment. Provisioning preserves the account's ownership and policy and revokes its existing
-sessions. The helper prepares the private directory as the host operator and runs the dedicated
-enrollment target with that operator's user and group IDs. Migrations do not mount enrollment
-output. Direct CLI use (`python -m scripts.enroll_identity`) remains available.
+`.identity-provisioning/enrollment-uri`. Transfer it securely to the account owner, import it
+into an authenticator, and remove the file after enrollment. Provisioning preserves ownership and
+policy and revokes existing sessions.
 For a password-enrolled account whose shared MFA secret was retired, add `--reset-mfa`
 to rotate its authenticator while preserving its password.
-
-`--provisioning-file` accepts a filename only. Output is confined to `/provisioning` in the
-container or the repository's `.identity-provisioning` directory for a local invocation.
-The enrollment module syncs the private URI before committing credentials and session
-revocation. Rejected or undelivered enrollments roll back and remove their reserved output.
-If committing fails after delivery, preserve the URI and verify account state before retrying:
-the database and filesystem cannot form one atomic transaction.
 
 The [synthetic seed command](#zero-trust-demo) is only for a disposable demonstration: its
 accounts deliberately use public passwords and authenticator secrets. Do not use those
@@ -306,17 +202,6 @@ The configuration and local certificate issuance have been checked, and a restri
 login has passed the audit-protection checks and started DBOS in its own schema. Container
 builds, deployed network isolation, and the gateway TLS handshake remain unverified in the
 current development environment because Docker is unavailable there.
-
-For the authenticated load script, set `TRAVEL_OPS_CA`, `TRAVEL_OPS_CERTIFICATE`, and
-`TRAVEL_OPS_PRIVATE_KEY` to the certificate files, and `TRAVEL_OPS_TOKEN` to the corresponding
-session token. CLI clients validate the server certificate and present their device certificate.
-
-For backend development outside containers, install BAML toolchain 0.23.0, matching the locked
-`baml-bridge` runtime, then run `uv sync` and `baml generate` from `backend`. Regenerate the SDK
-when `baml_src/` changes. A directly started API with enforcement enabled still requires the
-trusted certificate gateway. The legacy frontend development server (`cd frontend && npm install
-&& npm run dev`) listens on port 5173; it does not supply that gateway. Use the isolated stack
-for the enforced browser walkthrough.
 
 ### 5. Tests
 
