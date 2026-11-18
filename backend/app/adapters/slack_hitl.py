@@ -1,6 +1,6 @@
 """Slack HITL connector adapter: builds the Block Kit approval message, verifies Slack's
 webhook signature, and resolves an approve/reject click against the real booking state machine.
-No SDK — the surface is one outbound POST and one signed inbound callback, well within what
+No SDK; the surface is one outbound POST and one signed inbound callback, well within what
 httpx + stdlib hmac covers on their own.
 """
 
@@ -30,8 +30,8 @@ _REJECT_ACTION_ID = "reject_booking"
 
 def slack_configured(settings: Settings) -> bool:
     # Legacy dev-only connector: a Slack identity cannot prove the zero-trust claims (tenant,
-    # role, MFA, device) a protected action requires, so it is disabled whenever enforcement —
-    # the primary posture — is on. It is not a path to enforced approvals; in-app approval is.
+    # role, MFA, device) a protected action requires, so it is disabled whenever enforcement,
+    # the primary posture, is on. It is not a path to enforced approvals; in-app approval is.
     return bool(
         not posture.enforcement_active()
         and settings.slack_bot_token
@@ -51,7 +51,7 @@ async def connector_setting_row(session: AsyncSession) -> ConnectorSetting:
 
 async def slack_notifications_enabled(session: AsyncSession, settings: Settings) -> bool:
     """The single definition of "should we post to Slack": configured on this deployment
-    *and* toggled on in ``connector_setting`` — every caller shares this instead of
+    *and* toggled on in ``connector_setting``; every caller shares this instead of
     re-deriving the pair independently."""
     if not slack_configured(settings):
         return False
@@ -61,7 +61,7 @@ async def slack_notifications_enabled(session: AsyncSession, settings: Settings)
 
 def _format_local_flight_time(raw: str) -> str:
     """flight.depart_at/arrive_at are wall-clock strings in the departure/arrival airport's own
-    local time, straight from SearchApi, with no UTC offset attached — so this only reformats
+    local time, straight from SearchApi, with no UTC offset attached; this only reformats
     for readability, it never converts a timezone (there's no zone info to convert from)."""
     try:
         parsed = datetime.fromisoformat(raw)
@@ -72,7 +72,7 @@ def _format_local_flight_time(raw: str) -> str:
 
 def _slack_date_directive(moment_utc: datetime) -> str:
     """Slack's `<!date^...>` renders client-side in each viewer's own local timezone, unlike a
-    plain string — the right tool here because expires_at is a real UTC instant (unlike
+    plain string, the right tool here because expires_at is a real UTC instant (unlike
     flight.depart_at above, which has no zone to convert from)."""
     epoch_seconds = int(moment_utc.replace(tzinfo=UTC).timestamp())
     fallback = moment_utc.isoformat()
@@ -109,7 +109,7 @@ async def resolve_approve(session: AsyncSession, booking_log_id: int) -> str:
         await repository.confirm_booking(session, booking_log_id)
     except BookingError as error:
         return error.detail
-    return "Approved — continue in the app to complete booking with the airline."
+    return "Approved; continue in the app to complete booking with the airline."
 
 
 async def resolve_reject(session: AsyncSession, booking_log_id: int) -> str:
@@ -117,7 +117,7 @@ async def resolve_reject(session: AsyncSession, booking_log_id: int) -> str:
         await repository.cancel_booking(session, booking_log_id)
     except BookingError as error:
         return error.detail
-    return "Rejected — this fare will not be booked."
+    return "Rejected; this fare will not be booked."
 
 
 def build_approval_blocks(
@@ -162,7 +162,7 @@ def build_approval_blocks(
                         "type": "mrkdwn",
                         "text": (
                             "Approve to confirm this fare, or reject to cancel the request. "
-                            "Approving does not complete the booking — you'll continue in "
+                            "Approving does not complete the booking; you'll continue in "
                             "the app to finish it with the airline."
                         ),
                     }
@@ -197,11 +197,11 @@ def build_resolution_message(
 ) -> dict[str, Any]:
     if outcome_text.startswith("Approved"):
         status = (
-            ":white_check_mark: *Approved* — continue in the app to complete booking "
+                            ":white_check_mark: *Approved*; continue in the app to complete booking "
             "with the airline."
         )
     elif outcome_text.startswith("Rejected"):
-        status = ":no_entry_sign: *Rejected* — return to the app to choose another flight."
+        status = ":no_entry_sign: *Rejected*; return to the app to choose another flight."
     else:
         status = f":warning: {outcome_text}"
     return {

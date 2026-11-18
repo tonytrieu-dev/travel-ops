@@ -1,6 +1,6 @@
-"""The Human-in-the-Loop booking state machine — the single source of truth for transitions.
+"""The Human-in-the-Loop booking state machine, the single source of truth for transitions.
 
-This is deliberately NOT reachable by the agent. Booking state only ever changes through the
+This is deliberately NOT reachable by flight-search automation. Booking state only ever changes through the
 REST endpoints in ``routes/booking.py`` driven by explicit human clicks, so "a human confirmed
 before the write" is a structural guarantee, not something the prompt has to be trusted to honor.
 

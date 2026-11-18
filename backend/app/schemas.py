@@ -1,4 +1,4 @@
-"""API request/response models — the source of truth for HTTP validation and OpenAPI generation."""
+"""API request/response models, the source of truth for HTTP validation and OpenAPI generation."""
 
 import re
 from datetime import UTC, date, datetime
@@ -16,7 +16,7 @@ from pydantic import (
     model_validator,
 )
 
-from app.models import AgentStepKind, ExecutionEventKind, FitnessLevel, TripStatus
+from app.models import ExecutionEventKind, ExecutionStepKind, FitnessLevel, TripStatus
 from app.state import BookingState
 
 # Server timestamps are stored naive-UTC; serialize them with a +00:00 offset so a client doesn't
@@ -25,7 +25,7 @@ UtcDatetime = Annotated[
     datetime, PlainSerializer(lambda value: value.replace(tzinfo=UTC).isoformat(), return_type=str)
 ]
 
-# Airport codes are 3-letter uppercase IATA codes — the same rule the flight-search tool and the
+# Airport codes are 3-letter uppercase IATA codes, the same rule the flight-search service and the
 # frontend Questionnaire enforce, applied here so the API is never weaker than the client.
 _IATA_CODE_PATTERN = re.compile(r"^[A-Z]{3}$")
 
@@ -191,7 +191,7 @@ class TripRequestUpdate(BaseModel):
     @model_validator(mode="after")
     def _reject_nulling_required_fields(self) -> "TripRequestUpdate":
         """A partial update omits fields it doesn't touch; sending an explicit null for a required
-        field is a different intent — clearing it — which would leave the trip's criteria corrupt.
+        field is a different intent, clearing it, which would leave the trip's criteria corrupt.
         Reject it at the boundary as a 422 instead of letting it 500 on the DB NOT NULL insert."""
         nulled = [
             field_name
@@ -257,17 +257,16 @@ class TripSnapshotOut(BaseModel):
     flight_search: FlightSearchOut | None = None
 
 
-class AgentRunStepOut(BaseModel):
+class ExecutionStepOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     seq: int
-    kind: AgentStepKind
+    kind: ExecutionStepKind
     name: str
     status: str
     duration_ms: int | None = None
     input_summary: str | None = None
     output_summary: str | None = None
-    tokens: int | None = None
 
 
 class ExecutionEventOut(BaseModel):
@@ -285,35 +284,31 @@ class ExecutionEventOut(BaseModel):
     created_at: UtcDatetime
 
 
-class AgentRunOut(BaseModel):
+class ExecutionRunOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     trip_request_id: int
     status: str
-    model: str
-    total_input_tokens: int
-    total_output_tokens: int
+    provider: str
     total_ms: int
     started_at: UtcDatetime
     finished_at: UtcDatetime | None = None
-    steps: list[AgentRunStepOut] = Field(default_factory=list)
+    steps: list[ExecutionStepOut] = Field(default_factory=list)
     events: list[ExecutionEventOut] = Field(default_factory=list)
-    estimated_cost_usd: float | None = None
-    budget_utilization_pct: float | None = None
 
 
 class ExecutionPanelOut(BaseModel):
     trip_request_id: int
-    agent_runs: list[AgentRunOut] = Field(default_factory=list)
+    execution_runs: list[ExecutionRunOut] = Field(default_factory=list)
     events: list[ExecutionEventOut] = Field(default_factory=list)
 
 
 class GlobalExecutionPanelOut(BaseModel):
-    """One page of agent runs across the current user's trips."""
+    """One page of execution runs across the current user's trips."""
 
     next_before_run_id: int | None = None
-    agent_runs: list[AgentRunOut] = Field(default_factory=list)
+    execution_runs: list[ExecutionRunOut] = Field(default_factory=list)
 
 
 class SlackAuthErrorOut(BaseModel):

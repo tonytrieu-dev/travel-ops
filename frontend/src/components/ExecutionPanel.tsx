@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react"
 import { getAllExecution } from "../api/client"
-import type { AgentRunOut, AgentRunStepOut, GlobalExecutionPanelOut, TripRequestOut } from "../api/types"
+import type { ExecutionRunOut, ExecutionStepOut, GlobalExecutionPanelOut, TripRequestOut } from "../api/types"
 import { usePolledResource } from "../hooks/usePolledResource"
 import { FilterSelect } from "./FilterSelect"
 
@@ -21,7 +21,7 @@ function formatTimestamp(value: string): string {
 }
 
 // input_summary/output_summary are json.dumps'd server-side with no indent; pretty-print when
-// they parse as JSON, otherwise show the raw string (e.g. plain-text model output) as-is.
+// they parse as JSON, otherwise show the raw string as-is.
 function formatSummary(raw: string): string {
   try {
     return JSON.stringify(JSON.parse(raw), null, 2)
@@ -61,7 +61,7 @@ function MetricTile({ label, value }: { label: string; value: string }) {
   )
 }
 
-function RunStepSection({ title, steps }: { title: string; steps: AgentRunStepOut[] }) {
+function RunStepSection({ title, steps }: { title: string; steps: ExecutionStepOut[] }) {
   return (
     <div>
       <h4 className="text-sm font-semibold text-slate-900">
@@ -84,11 +84,9 @@ function RunStepSection({ title, steps }: { title: string; steps: AgentRunStepOu
                 {statusLabel(step.status)}
               </span>
             </div>
-            {(step.duration_ms != null || (step.kind === "model" && step.tokens != null)) && (
+            {step.duration_ms != null && (
               <p className="mt-1 text-xs text-slate-500">
                 {step.duration_ms != null && `${step.duration_ms} ms`}
-                {step.duration_ms != null && step.kind === "model" && step.tokens != null && " · "}
-                {step.kind === "model" && step.tokens != null && `${step.tokens} tokens`}
               </p>
             )}
             {step.input_summary && (
@@ -114,9 +112,9 @@ function RunStepSection({ title, steps }: { title: string; steps: AgentRunStepOu
   )
 }
 
-function AgentRunCard({ run, tripLabel }: { run: AgentRunOut; tripLabel: string }) {
-  const modelSteps = run.steps.filter((step) => step.kind === "model")
-  const toolSteps = run.steps.filter((step) => step.kind === "tool")
+function ExecutionRunCard({ run, tripLabel }: { run: ExecutionRunOut; tripLabel: string }) {
+  const providerSteps = run.steps.filter((step) => step.kind === "provider")
+  const externalCallSteps = run.steps.filter((step) => step.kind === "external_call")
   const outputSteps = run.steps.filter((step) => step.kind === "output")
 
   return (
@@ -139,28 +137,16 @@ function AgentRunCard({ run, tripLabel }: { run: AgentRunOut; tripLabel: string 
       </div>
 
       <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-        <MetricTile label={modelSteps.length > 0 ? "Model" : "Provider"} value={run.model} />
-        <MetricTile label="Tool calls" value={String(toolSteps.length)} />
-        <MetricTile label="Model calls" value={String(modelSteps.length)} />
+        <MetricTile label="Provider" value={run.provider} />
+        <MetricTile label="Provider calls" value={String(providerSteps.length)} />
+        <MetricTile label="External calls" value={String(externalCallSteps.length)} />
         <MetricTile label="Latency" value={`${run.total_ms} ms`} />
-        <MetricTile
-          label="Tokens in / out"
-          value={`${run.total_input_tokens} / ${run.total_output_tokens}`}
-        />
-        <MetricTile
-          label="Context used"
-          value={run.budget_utilization_pct != null ? `${run.budget_utilization_pct.toFixed(1)}%` : "Not available"}
-        />
-        <MetricTile
-          label="Estimated cost"
-          value={run.estimated_cost_usd != null ? `$${run.estimated_cost_usd.toFixed(4)}` : "Not available"}
-        />
         <MetricTile label="Steps" value={String(run.steps.length)} />
       </div>
 
       <div className="space-y-5">
-        <RunStepSection title="Model calls" steps={modelSteps} />
-        <RunStepSection title="Tool calls" steps={toolSteps} />
+        <RunStepSection title="Provider calls" steps={providerSteps} />
+        <RunStepSection title="External calls" steps={externalCallSteps} />
         <RunStepSection title="Final output" steps={outputSteps} />
       </div>
     </div>
@@ -177,12 +163,12 @@ export function ExecutionPanel({ trips, isRunActive }: ExecutionPanelProps) {
     resourceKey: `execution-history:${beforeRunId ?? "latest"}`,
     errorText: "Could not load execution data.",
   })
-  const allRuns = useMemo(() => data?.agent_runs ?? [], [data])
+  const allRuns = useMemo(() => data?.execution_runs ?? [], [data])
   const [routeSearch, setRouteSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
 
   const tripsById = useMemo(() => new Map(trips.map((trip) => [trip.id, trip])), [trips])
-  const runTripLabel = (run: AgentRunOut) => {
+  const runTripLabel = (run: ExecutionRunOut) => {
     const trip = tripsById.get(run.trip_request_id)
     return trip ? tripLabel(trip) : `Trip #${run.trip_request_id}`
   }
@@ -201,7 +187,7 @@ export function ExecutionPanel({ trips, isRunActive }: ExecutionPanelProps) {
   return (
     <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold text-slate-900">Agent execution history</h2>
+        <h2 className="text-lg font-semibold text-slate-900">Flight search history</h2>
         {trips.length > 0 && (
           <div className="flex items-center gap-2">
             <input
@@ -227,8 +213,8 @@ export function ExecutionPanel({ trips, isRunActive }: ExecutionPanelProps) {
         )}
       </div>
       <p className="-mt-2 text-sm text-slate-500">
-        Agent runs across every trip, newest first, 20 per page. Filters apply to this page.
-        Model usage and external tool activity are reported inline within each run.
+        Flight searches across every trip, newest first, 20 per page. Filters apply to this page.
+        Provider activity is reported inline within each search.
       </p>
 
       {errorMessage && (
@@ -247,7 +233,7 @@ export function ExecutionPanel({ trips, isRunActive }: ExecutionPanelProps) {
       )}
 
       {runs.map((run) => (
-        <AgentRunCard key={run.id} run={run} tripLabel={runTripLabel(run)} />
+        <ExecutionRunCard key={run.id} run={run} tripLabel={runTripLabel(run)} />
       ))}
       <nav aria-label="Execution history pages" className="flex items-center justify-between gap-3">
         <button type="button" disabled={pageCursors.length === 1 || !data}

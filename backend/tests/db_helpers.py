@@ -14,9 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlmodel import col
 
 from app.models import (
-    AgentRun,
-    AgentRunStep,
-    AgentStepKind,
+    ExecutionRun,
+    ExecutionStep,
+    ExecutionStepKind,
     BookingTransition,
     ExecutionEvent,
     ExecutionEventKind,
@@ -177,53 +177,46 @@ async def seed_flight_search_results(
     return [result.id]
 
 
-async def seed_agent_run(
+async def seed_execution_run(
     session: AsyncSession,
     trip_id: int,
-    *,
-    total_input_tokens: int = 1000,
-    total_output_tokens: int = 200,
 ) -> int:
-    """Insert one AgentRun with a single MODEL step and return the run id."""
-    agent_run = AgentRun(
+    execution_run = ExecutionRun(
         trip_request_id=trip_id,
         status="completed",
-        model="llama-3.3-70b-versatile",
-        total_input_tokens=total_input_tokens,
-        total_output_tokens=total_output_tokens,
+        provider="recorded",
         total_ms=1500,
         finished_at=utcnow(),
     )
-    session.add(agent_run)
+    session.add(execution_run)
     await session.flush()
-    assert agent_run.id is not None
+    assert execution_run.id is not None
 
     session.add(
-        AgentRunStep(
-            agent_run_id=agent_run.id,
+        ExecutionStep(
+            execution_run_id=execution_run.id,
             seq=1,
-            kind=AgentStepKind.MODEL,
-            name="llama-3.3-70b-versatile",
+            kind=ExecutionStepKind.PROVIDER,
+            name="search_flights",
             status="completed",
             duration_ms=1500,
             output_summary="Flight search completed.",
-            tokens=total_output_tokens,
         )
     )
     await session.flush()
-    return agent_run.id
+    return execution_run.id
 
 
 async def seed_execution_event(
     session: AsyncSession,
     trip_id: int,
     *,
-    agent_run_id: int | None = None,
+    execution_run_id: int | None = None,
     name: str = "search_flights",
 ) -> int:
     event = ExecutionEvent(
         trip_request_id=trip_id,
-        agent_run_id=agent_run_id,
+        execution_run_id=execution_run_id,
         seq=1,
         kind=ExecutionEventKind.API_CALL,
         name=name,
@@ -263,12 +256,12 @@ async def get_execution_events(session: AsyncSession, trip_id: int) -> list[Exec
     )
 
 
-async def get_agent_runs(session: AsyncSession, trip_id: int) -> list[AgentRun]:
+async def get_execution_runs(session: AsyncSession, trip_id: int) -> list[ExecutionRun]:
     return list(
         await session.scalars(
-            select(AgentRun)
-            .where(col(AgentRun.trip_request_id) == trip_id)
-            .order_by(col(AgentRun.started_at))
+            select(ExecutionRun)
+            .where(col(ExecutionRun.trip_request_id) == trip_id)
+            .order_by(col(ExecutionRun.started_at))
         )
     )
 

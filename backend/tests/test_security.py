@@ -1,7 +1,7 @@
 """Zero-trust decision path, exercised against the real Postgres the app runs on.
 
 Each test targets a distinct failure mode: when it goes red, it names one root cause a developer
-can act on. Overlapping or trivial-one-liner checks are intentionally absent — the append-only
+can act on. Overlapping or trivial-one-liner checks are intentionally absent; the append-only
 guarantee lives in test_append_only.py, and login throttling in test_rate_limit.py.
 """
 

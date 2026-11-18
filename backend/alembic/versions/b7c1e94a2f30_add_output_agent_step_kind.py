@@ -22,7 +22,7 @@ _OUTPUT_TOOL_MATCH = r"name = 'final_result' OR name LIKE 'final\_result\_%'"
 
 def upgrade() -> None:
     # Postgres refuses to *use* a new enum label in the transaction that added it, and Alembic runs
-    # every revision of one `upgrade` in a single transaction — so the ADD VALUE has to commit on
+    # every revision of one `upgrade` in a single transaction; the ADD VALUE has to commit on
     # its own before the backfill below can reference it.
     with op.get_context().autocommit_block():
         op.execute("ALTER TYPE agentstepkind ADD VALUE IF NOT EXISTS 'OUTPUT'")

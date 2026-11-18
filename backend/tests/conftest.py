@@ -9,7 +9,7 @@ two concurrent tasks on that one loop, each with its own DB connection, so the `
 UPDATE`` in one genuinely blocks the other in Postgres.
 
 Direct DB seeding (a booking already CONFIRMED, or one whose fare has expired) runs through
-``run_db`` on its own short-lived engine/loop, fully committed and disposed before the request —
+``run_db`` on its own short-lived engine/loop, fully committed and disposed before the request;
 so app connections (portal loop) and seed connections (seed loop) never cross event loops.
 """
 
@@ -42,7 +42,7 @@ from app.adapters.flights_searchapi import FlightSearchOutcome, NormalizedFlight
 from tests.db_helpers import run_db
 
 _ALL_TABLES = (
-    "booking_transition, execution_event, agent_run_step, agent_run, hitl_booking_log, "
+    "booking_transition, execution_event, execution_step, execution_run, hitl_booking_log, "
     "flight_search_result, trip_request, user_account, connector_setting, security_event, security_session, security_incident, compliance_assessment"
 )
 
@@ -64,7 +64,7 @@ def _truncate_between_tests(request: pytest.FixtureRequest) -> None:
 @pytest.fixture(autouse=True)
 def _reset_rate_limit_state() -> None:
     """The rate limiter's per-IP counters and in-flight-run counter are plain module-level
-    state (no DB truncation reaches them) — without this, request counts leak across tests that
+    state (no DB truncation reaches them); without this, request counts leak across tests that
     share the TestClient's fixed IP and make rate-limit tests order-dependent."""
     from app import rate_limit
 
@@ -77,7 +77,7 @@ class BookingOptionsFetchSpy:
 
     Shaped as a ``FlightProvider`` (not the old ``BookingOptionsFetcher`` closure) because
     ``execute_booking_durable``'s DBOS step resolves its provider via ``get_flight_provider``,
-    the same seam ``test_flight_provider_strategy.py`` already exercises — not an injected
+    the same seam ``test_flight_provider_strategy.py`` already exercises, not an injected
     closure, which DBOS workflow args can't carry.
     """
 

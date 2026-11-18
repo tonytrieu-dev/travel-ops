@@ -47,7 +47,7 @@ results. Search results are cached for 15 minutes and booking freshness is limit
 
 ## Persistence
 
-Trips, flight results, booking logs/transitions, execution events, agent-run records, and security
+Trips, flight results, booking logs/transitions, execution events, execution-run records, and security
 evidence remain persisted. The `itinerary` table is removed by forward Alembic migration
 `f6a7b8c9d012`; existing itinerary data is intentionally discarded because this is a disposable
 demo and the feature no longer exists.

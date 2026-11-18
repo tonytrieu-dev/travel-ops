@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Repo instructions for coding agents working on Travel Agent.
+Repo instructions for coding agents working on TravelOps.
 
 ## Workflow
 - Use code-first TDD. Runtime code and focused tests are the source of truth. Add the smallest
@@ -9,16 +9,16 @@ Repo instructions for coding agents working on Travel Agent.
   policy, tenant ownership, API segmentation, append-only audit, or automatic containment.
 - Before committing, run `cd backend && uv run pytest -q` and `uv run pyrefly check`. These need
   PostgreSQL. Use `uv run pytest -q -m no_database` for tests that do not need it.
-- Use fail-fast and never nest control flow. In the agent's tool loop, raise `ModelRetry` for a
-  recoverable tool-call error so the model can self-correct.
+- Use fail-fast and never nest control flow. Raise the project's typed retry error for recoverable
+  external-call failures so the caller can self-correct.
 - No abbreviations in names. Comments only for non-obvious WHY.
 
 ## Architecture (enforced)
 DI (`Depends`) · Finite State Machine (`app/state.py`) · Repository (`app/repositories/`) ·
 Strategy (`FlightProvider`: Live vs Recorded by `USE_LIVE_FLIGHT_API`) · Durable Execution
-(DBOS wraps booking `execute` and the agent run).
+(DBOS wraps booking `execute` and the flight-search execution run).
 
-## Travel-agent system
+## TravelOps system
 
 TravelOps is deterministic: flight search uses the configured live or recorded provider, and
 booking execution remains behind the human approval and security boundaries. There is no LLM,

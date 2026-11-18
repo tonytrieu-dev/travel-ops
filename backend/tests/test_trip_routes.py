@@ -75,7 +75,7 @@ def test_flight_search_finalizes_live_cached_and_failed_runs(client, flight_sear
         assert client.post(search_url).status_code == 200
     assert flight_search_spy.calls == 1
 
-    runs = client.get(f"/api/trips/{trip['id']}/execution").json()["agent_runs"]
+    runs = client.get(f"/api/trips/{trip['id']}/execution").json()["execution_runs"]
     assert len(runs) == 2
     for run in runs:
         assert run["status"] == "completed" and run["finished_at"] is not None
@@ -88,7 +88,7 @@ def test_flight_search_finalizes_live_cached_and_failed_runs(client, flight_sear
     monkeypatch.setattr(flight_search_spy, "search_offers", fail_search)
     other_trip = client.post("/api/trips", json=_trip_payload(destination_airport="SFO")).json()
     assert client.post(f"/api/trips/{other_trip['id']}/flights/search").status_code == 500
-    failed_runs = client.get(f"/api/trips/{other_trip['id']}/execution").json()["agent_runs"]
+    failed_runs = client.get(f"/api/trips/{other_trip['id']}/execution").json()["execution_runs"]
     assert len(failed_runs) == 1
     assert failed_runs[0]["status"] == "failed" and failed_runs[0]["finished_at"] is not None
     assert failed_runs[0]["steps"] == []
@@ -132,7 +132,7 @@ def test_concurrent_flight_searches_have_separate_execution_runs(
     assert responses[1].json()["offers"] == offers
     stored_offers = run_db(lambda session: get_flight_search_results(session, trip["id"]))
     assert {offer.id for offer in stored_offers} == {offer["id"] for offer in offers}
-    runs = client.get(f"/api/trips/{trip['id']}/execution").json()["agent_runs"]
+    runs = client.get(f"/api/trips/{trip['id']}/execution").json()["execution_runs"]
     assert len(runs) == 2
     assert len({run["id"] for run in runs}) == 2
     for run in runs:
@@ -142,28 +142,28 @@ def test_concurrent_flight_searches_have_separate_execution_runs(
 
 
 def test_execution_history_pages_owned_runs_with_matching_details(client) -> None:
-    from tests.db_helpers import seed_agent_run, seed_execution_event
+    from tests.db_helpers import seed_execution_event, seed_execution_run
 
     trip = client.post("/api/trips", json=_trip_payload()).json()
 
     async def seed_history(session):
         other_trip_id = await seed_trip(session)
-        first = await seed_agent_run(session, trip["id"])
-        second = await seed_agent_run(session, trip["id"])
-        await seed_agent_run(session, other_trip_id)
-        await seed_execution_event(session, trip["id"], agent_run_id=first, name="older")
-        await seed_execution_event(session, trip["id"], agent_run_id=second, name="newer")
+        first = await seed_execution_run(session, trip["id"])
+        second = await seed_execution_run(session, trip["id"])
+        await seed_execution_run(session, other_trip_id)
+        await seed_execution_event(session, trip["id"], execution_run_id=first, name="older")
+        await seed_execution_event(session, trip["id"], execution_run_id=second, name="newer")
         return first, second
 
     first, second = run_db(seed_history)
     page = client.get("/api/execution?page_size=1").json()
-    assert [run["id"] for run in page["agent_runs"]] == [second]
-    assert [event["name"] for event in page["agent_runs"][0]["events"]] == ["newer"]
-    assert len(page["agent_runs"][0]["steps"]) == 1
+    assert [run["id"] for run in page["execution_runs"]] == [second]
+    assert [event["name"] for event in page["execution_runs"][0]["events"]] == ["newer"]
+    assert len(page["execution_runs"][0]["steps"]) == 1
     assert page["next_before_run_id"] == second
     page = client.get(f"/api/execution?page_size=1&before_run_id={second}").json()
-    assert [run["id"] for run in page["agent_runs"]] == [first]
-    assert [event["name"] for event in page["agent_runs"][0]["events"]] == ["older"]
+    assert [run["id"] for run in page["execution_runs"]] == [first]
+    assert [event["name"] for event in page["execution_runs"][0]["events"]] == ["older"]
     assert page["next_before_run_id"] is None
     for query in ("page_size=0", "page_size=101", "before_run_id=-1"):
         assert client.get(f"/api/execution?{query}").status_code == 422

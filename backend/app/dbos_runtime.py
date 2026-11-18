@@ -1,7 +1,7 @@
-"""DBOS durable-execution wiring: booking execute and the agent run replay-safe across crashes.
+"""DBOS durable-execution wiring: booking execute and flight-search runs replay-safe across crashes.
 
 Both entry points take only serializable arguments (a DBOS constraint) and rebuild whatever
-session/provider they need internally, rather than receiving them injected — this is the only
+session/provider they need internally, rather than receiving them injected; this is the only
 change from the plain, already-tested versions of the functions they call.
 """
 
@@ -31,7 +31,7 @@ def _as_durable_step(step_name: str, bound_method):
 # function-scoped `client` fixture and would double-wrap on every call).
 def launch_dbos() -> None:
     settings = get_settings()
-    DBOS(config=DBOSConfig(name="travel-agent", system_database_url=settings.dbos_database_url))
+    DBOS(config=DBOSConfig(name="travelops", system_database_url=settings.dbos_database_url))
     DBOS.launch()
 
 

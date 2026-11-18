@@ -1,4 +1,4 @@
-"""Connectors routes: a live, DB-backed toggle for the Slack HITL connector — no separate
+"""Connectors routes: a live, DB-backed toggle for the Slack HITL connector, with no separate
 repository module, this is a single row with two simple queries."""
 
 from typing import Any

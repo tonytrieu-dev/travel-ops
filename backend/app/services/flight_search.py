@@ -11,11 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from app.adapters.flights_searchapi import FlightProvider, NormalizedFlightOffer
-from app.agent.execution_log import finish_run, record_event
+from app.execution_log import finish_run, record_event
 from app.config import FLIGHT_CACHE_TTL_MINUTES
 from app.models import (
-    AgentRunStep,
-    AgentStepKind,
+    ExecutionStep,
+    ExecutionStepKind,
     ExecutionEventKind,
     FlightResultSource,
     FlightSearchResult,
@@ -256,8 +256,8 @@ class FlightSearchService:
             "completed" if status == "ok" else status,
             started_at=run_started_at,
             total_ms=total_ms,
-            steps=[AgentRunStep(
-                seq=1, kind=AgentStepKind.TOOL, name="search_flights",
+            steps=[ExecutionStep(
+                seq=1, kind=ExecutionStepKind.PROVIDER, name="search_flights",
                 status=status, duration_ms=duration_ms if duration_ms is not None else total_ms,
                 input_summary=(
                     f"{trip.origin} to {trip.destination_airport}, "

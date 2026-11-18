@@ -18,7 +18,7 @@ depends_on: str | Sequence[str] | None = None
 
 # Age/fitness predate being mandatory. execution_event and booking_transition are append-only
 # (reject_audit_row_mutation rejects any DELETE against them), so a legacy trip that ever
-# produced an execution_event or a hitl_booking_log entry cannot be deleted — its trip_request
+# produced an execution_event or a hitl_booking_log entry cannot be deleted; its trip_request
 # row is kept and backfilled instead. Only a trip with zero audit trail is safe to remove.
 _LEGACY_TRIP_WITH_NO_AUDIT_TRAIL = (
     "(age IS NULL OR fitness_level IS NULL) "
@@ -39,7 +39,7 @@ def upgrade() -> None:
     )
     op.execute(f"DELETE FROM trip_request WHERE {_LEGACY_TRIP_WITH_NO_AUDIT_TRAIL}")
 
-    # Every trip still null here has a permanent audit trail (excluded above) — its history is
+# Every trip still null here has a permanent audit trail (excluded above); its history is
     # kept, and age/fitness is backfilled with a neutral placeholder purely to satisfy NOT NULL.
     op.execute("UPDATE trip_request SET age = 30 WHERE age IS NULL")
     op.execute("UPDATE trip_request SET fitness_level = 'MODERATE' WHERE fitness_level IS NULL")

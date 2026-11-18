@@ -9,7 +9,7 @@ interface LiveActivityProps {
 
 const STEP_LABELS: Record<string, string> = {
   search_flights: "Searching flights",
-  web_search: "Researching activities",
+  web_search: "External search",
 }
 
 function labelFor(name: string): string {
@@ -49,7 +49,7 @@ export function LiveActivity({ tripId, isRunActive }: LiveActivityProps) {
             <span className="h-2.5 w-2.5 rounded-full bg-slate-300" />
           )}
           <h2 className="text-lg font-semibold text-slate-900">
-            {isRunActive ? "Agent working…" : "Agent activity"}
+            {isRunActive ? "Flight search in progress…" : "Flight search activity"}
           </h2>
         </div>
         {recent.length > 0 && (
@@ -65,7 +65,7 @@ export function LiveActivity({ tripId, isRunActive }: LiveActivityProps) {
 
       {recent.length === 0 ? (
         <p className="text-sm text-slate-500">
-          Nothing yet. You'll see what the agent is doing here once it starts working.
+          Nothing yet. Flight search activity will appear here once a search starts.
         </p>
       ) : (
         <ol className="max-h-72 space-y-1.5 overflow-y-auto">

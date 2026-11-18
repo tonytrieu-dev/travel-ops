@@ -1,8 +1,8 @@
 """SQLModel tables: 5 core + 4 audit/observability.
 
 Two of the audit tables (``BookingTransition``, ``ExecutionEvent``) are made physically
-append-only by database triggers created in the Alembic migration — no application code path,
-and no agent, can edit or delete a row once written.
+append-only by database triggers created in the Alembic migration; no application code path,
+and no application path can edit or delete a row once written.
 """
 
 from datetime import UTC, datetime
@@ -44,11 +44,9 @@ class ExecutionEventKind(StrEnum):
     HITL = "hitl"
 
 
-class AgentStepKind(StrEnum):
-    MODEL = "model"
-    TOOL = "tool"
-    # The agent's structured result, which pydantic-ai delivers as a synthetic `final_result*`
-    # tool call — protocol-level a tool, but not one of the agent's real tools.
+class ExecutionStepKind(StrEnum):
+    PROVIDER = "provider"
+    EXTERNAL_CALL = "external_call"
     OUTPUT = "output"
 
 
@@ -206,7 +204,7 @@ class HITLBookingLog(SQLModel, table=True):
     flight_search_result_id: int = Field(foreign_key="flight_search_result.id", index=True)
     state: BookingState = Field(default=BookingState.PENDING_USER_CONFIRMATION, index=True)
     requested_by_user_id: int = Field(foreign_key="user_account.id")
-    # Our internal record locator (set at EXECUTED) — a genuine reference for OUR system, not a
+    # Our internal record locator (set at EXECUTED), a genuine reference for OUR system, not a
     # fabricated airline PNR (only an airline can mint a real PNR).
     booking_reference: str | None = None
     # The real SearchApi booking options fetched at execute time: provider, price, and a
@@ -221,7 +219,7 @@ class HITLBookingLog(SQLModel, table=True):
 class ConnectorSetting(SQLModel, table=True):
     """Single-row table: live, DB-backed toggles for optional external connectors (currently
     just Slack). Kept separate from ``Settings`` because it must be flippable at runtime without
-    a restart — that's the point of a toggle instead of an env var."""
+    a restart; that's the point of a toggle instead of an env var."""
 
     __tablename__ = "connector_setting"
 
@@ -254,7 +252,7 @@ class ExecutionEvent(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     trip_request_id: int = Field(foreign_key="trip_request.id", index=True)
-    agent_run_id: int | None = Field(default=None, foreign_key="agent_run.id", index=True)
+    execution_run_id: int | None = Field(default=None, foreign_key="execution_run.id", index=True)
     seq: int
     kind: ExecutionEventKind
     name: str
@@ -267,30 +265,27 @@ class ExecutionEvent(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
 
 
-class AgentRun(SQLModel, table=True):
-    __tablename__ = "agent_run"
+class ExecutionRun(SQLModel, table=True):
+    __tablename__ = "execution_run"
 
     id: int | None = Field(default=None, primary_key=True)
     trip_request_id: int = Field(foreign_key="trip_request.id", index=True)
     status: str
-    model: str
-    total_input_tokens: int = 0
-    total_output_tokens: int = 0
+    provider: str
     total_ms: int = 0
     started_at: datetime = Field(default_factory=utcnow)
     finished_at: datetime | None = None
 
 
-class AgentRunStep(SQLModel, table=True):
-    __tablename__ = "agent_run_step"
+class ExecutionStep(SQLModel, table=True):
+    __tablename__ = "execution_step"
 
     id: int | None = Field(default=None, primary_key=True)
-    agent_run_id: int = Field(foreign_key="agent_run.id", index=True)
+    execution_run_id: int = Field(foreign_key="execution_run.id", index=True)
     seq: int
-    kind: AgentStepKind
+    kind: ExecutionStepKind
     name: str
     status: str
     duration_ms: int | None = None
     input_summary: str | None = None
     output_summary: str | None = None
-    tokens: int | None = None

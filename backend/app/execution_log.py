@@ -1,4 +1,4 @@
-"""Context-local ExecutionEvent recorder — deep call-stack code records without threading
+"""Context-local ExecutionEvent recorder. Deep call-stack code records without threading
 trip_request_id through every signature. Commits immediately so a later failure still leaves
 prior events recorded.
 """
@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
-from app.models import AgentRun, AgentRunStep, ExecutionEvent, ExecutionEventKind, TripRequest, utcnow
+from app.models import ExecutionEvent, ExecutionEventKind, ExecutionRun, ExecutionStep, TripRequest, utcnow
 from app.request_context import bind_correlation_id, correlation_id
 
 
@@ -23,9 +23,9 @@ from app.request_context import bind_correlation_id, correlation_id
 class _ExecutionContext:
     session: AsyncSession
     trip_request_id: int
-    agent_run: AgentRun | None
+    execution_run: ExecutionRun | None
     # AsyncSession isn't safe for concurrent use; serializes record_event() within this context
-    # only — cross-context seq safety is the FOR UPDATE claim in record_event(), not this lock.
+    # only. Cross-context seq safety is the FOR UPDATE claim in record_event(), not this lock.
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
@@ -34,29 +34,29 @@ _current: ContextVar[_ExecutionContext | None] = ContextVar("execution_context",
 
 @asynccontextmanager
 async def execution_context(
-    session: AsyncSession, trip_request_id: int, *, run_model: str | None = None, correlation: str | None = None
-) -> AsyncIterator[AgentRun | None]:
+    session: AsyncSession, trip_request_id: int, *, provider: str | None = None, correlation: str | None = None
+) -> AsyncIterator[ExecutionRun | None]:
     """Bind one execution so its append-only events retain both trip and run ownership."""
     with bind_correlation_id(correlation or correlation_id()):
-        agent_run = None
-        if run_model is not None:
-            agent_run = AgentRun(trip_request_id=trip_request_id, status="running", model=run_model)
-            session.add(agent_run)
+        execution_run = None
+        if provider is not None:
+            execution_run = ExecutionRun(trip_request_id=trip_request_id, status="running", provider=provider)
+            session.add(execution_run)
             await session.commit()
-        if agent_run is not None:
-            assert agent_run.id is not None
+        if execution_run is not None:
+            assert execution_run.id is not None
 
         token = _current.set(
             _ExecutionContext(
                 session=session,
                 trip_request_id=trip_request_id,
-                agent_run=agent_run,
+                execution_run=execution_run,
             )
         )
         try:
-            yield agent_run
+            yield execution_run
         except Exception:
-            if agent_run is not None and agent_run.status == "running":
+            if execution_run is not None and execution_run.status == "running":
                 await finish_run("failed")
             raise
         finally:
@@ -67,7 +67,7 @@ def _bound_context(caller_name: str) -> _ExecutionContext:
     context = _current.get()
     if context is None:
         raise RuntimeError(
-            f"{caller_name}() called with no execution_context bound — every "
+            f"{caller_name}() called with no execution_context bound; every "
             "adapter/tool/protocol call must run inside execution_log.execution_context()"
         )
     return context
@@ -92,7 +92,7 @@ async def record_event(
     context = _bound_context("record_event")
     async with context.lock:
         # FOR UPDATE on the trip row serializes seq allocation across concurrent runs (e.g. a
-        # double-submitted searches) — a locally-cached counter would let two runs read the same
+        # double-submitted searches); a locally-cached counter would let two runs read the same
         # starting point and hand out colliding seq values.
         await context.session.execute(
             select(TripRequest).where(col(TripRequest.id) == context.trip_request_id).with_for_update()
@@ -106,7 +106,7 @@ async def record_event(
         context.session.add(
             ExecutionEvent(
                 trip_request_id=context.trip_request_id,
-                agent_run_id=context.agent_run.id if context.agent_run is not None else None,
+                execution_run_id=context.execution_run.id if context.execution_run is not None else None,
                 seq=next_seq,
                 kind=kind,
                 name=name,
@@ -124,29 +124,26 @@ async def record_event(
 async def finish_run(
     status: str,
     *,
-    steps: list[AgentRunStep] | None = None,
+    steps: list[ExecutionStep] | None = None,
     total_ms: int | None = None,
     started_at: datetime | None = None,
     usage: Any = None,
 ) -> None:
     context = _bound_context("finish_run")
-    agent_run = context.agent_run
-    if agent_run is None:
+    execution_run = context.execution_run
+    if execution_run is None:
         raise RuntimeError("finish_run requires an execution context with a run")
     finished_at = utcnow()
-    agent_run.status = status
+    execution_run.status = status
     if started_at is not None:
-        agent_run.started_at = started_at
-    agent_run.finished_at = finished_at
-    agent_run.total_ms = (
+        execution_run.started_at = started_at
+    execution_run.finished_at = finished_at
+    execution_run.total_ms = (
         total_ms if total_ms is not None
-        else round((finished_at - agent_run.started_at).total_seconds() * 1000)
+        else round((finished_at - execution_run.started_at).total_seconds() * 1000)
     )
-    if usage is not None:
-        agent_run.total_input_tokens = usage.input_tokens
-        agent_run.total_output_tokens = usage.output_tokens
-    assert agent_run.id is not None
+    assert execution_run.id is not None
     for step in steps or []:
-        step.agent_run_id = agent_run.id
+        step.execution_run_id = execution_run.id
         context.session.add(step)
     await context.session.commit()

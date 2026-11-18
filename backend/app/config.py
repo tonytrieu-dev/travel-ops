@@ -1,7 +1,7 @@
 """Application configuration, loaded once from the environment (fail-fast).
 
 Secrets are wrapped in ``SecretStr`` so they never appear in logs or ``repr`` output.
-Every tunable the agent and adapters rely on lives here as a named constant — no magic
+Every tunable the automation and adapters rely on lives here as a named constant; no magic
 numbers scattered through the codebase.
 """
 

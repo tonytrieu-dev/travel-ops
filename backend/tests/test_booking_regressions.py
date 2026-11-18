@@ -149,7 +149,7 @@ def test_booking_admission_uses_original_quote_age(
 
 
 def test_cross_trip_cache_preserves_original_quote_timestamp(flight_search_spy) -> None:
-    from app.agent.execution_log import execution_context
+    from app.execution_log import execution_context
     from app.services.flight_search import FlightSearchService
 
     quoted_at = utcnow() - timedelta(minutes=14)

@@ -120,35 +120,30 @@ export interface TripSnapshotOut {
   flight_search: FlightSearchOut | null
 }
 
-export type AgentStepKind = "model" | "tool" | "output"
+export type ExecutionStepKind = "provider" | "external_call" | "output"
 
 export type ExecutionEventKind = "api_call" | "db_query" | "protocol" | "hitl"
 
-export interface AgentRunStepOut {
+export interface ExecutionStepOut {
   seq: number
-  kind: AgentStepKind
+  kind: ExecutionStepKind
   name: string
   status: string
   duration_ms?: number | null
   input_summary?: string | null
   output_summary?: string | null
-  tokens?: number | null
 }
 
-export interface AgentRunOut {
+export interface ExecutionRunOut {
   id: number
   trip_request_id: number
   status: string
-  model: string
-  total_input_tokens: number
-  total_output_tokens: number
+  provider: string
   total_ms: number
   started_at: string
   finished_at?: string | null
-  steps: AgentRunStepOut[]
+  steps: ExecutionStepOut[]
   events: ExecutionEventOut[]
-  estimated_cost_usd?: number | null
-  budget_utilization_pct?: number | null
 }
 
 export interface ExecutionEventOut {
@@ -165,13 +160,13 @@ export interface ExecutionEventOut {
 
 export interface ExecutionPanelOut {
   trip_request_id: number
-  agent_runs: AgentRunOut[]
+  execution_runs: ExecutionRunOut[]
   events: ExecutionEventOut[]
 }
 
 export interface GlobalExecutionPanelOut {
   next_before_run_id: number | null
-  agent_runs: AgentRunOut[]
+  execution_runs: ExecutionRunOut[]
 }
 
 export interface BookingRequestCreate {

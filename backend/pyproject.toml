@@ -1,7 +1,7 @@
 [project]
-name = "travel-agent"
+name = "travelops"
 version = "0.1.0"
-description = "AI Travel Agent with a strict Human-in-the-Loop booking gate"
+description = "Deterministic zero-trust travel automation with a strict human approval booking gate"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",

@@ -102,11 +102,11 @@ test(`a new latest assessment clears ${evidenceState} evidence`, async (context)
 test("execution history keeps older pages reachable without fetching every run", async (context) => {
   const { ExecutionPanel } = await import("../ExecutionPanel.tsx")
   const requestedCursors = []
-  const run = (id) => ({ id, trip_request_id: 1, status: "completed", model: "test", total_input_tokens: 0, total_output_tokens: 0, total_ms: 1, started_at: "2030-01-01T00:00:00Z", steps: [], events: [] })
+  const run = (id) => ({ id, trip_request_id: 1, status: "completed", provider: "test", total_ms: 1, started_at: "2030-01-01T00:00:00Z", steps: [], events: [] })
   context.mock.method(globalThis, "fetch", async (url) => {
     const cursor = new URL(url).searchParams.get("before_run_id")
     requestedCursors.push(cursor)
-    return response(cursor ? { agent_runs: [run(1)], next_before_run_id: null } : { agent_runs: [run(2)], next_before_run_id: 2 })
+    return response(cursor ? { execution_runs: [run(1)], next_before_run_id: null } : { execution_runs: [run(2)], next_before_run_id: 2 })
   })
   const view = render(createElement(ExecutionPanel, { trips: [], isRunActive: false }))
   await act(async () => {})

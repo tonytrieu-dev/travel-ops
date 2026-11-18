@@ -1,7 +1,7 @@
 """The HITL booking state machine, enforced against the database.
 
 Every state change goes through here and, in the same transaction, writes an append-only
-BookingTransition — so "a human confirmed before the gated write" is a fact recorded in an
+BookingTransition, so "a human confirmed before the gated write" is a fact recorded in an
 immutable audit row, not a claim. ``execute_booking`` is the only gated action and the highest-
 value guard: it claims the row with SELECT ... FOR UPDATE, re-checks state under the lock, and
 fetches booking options exactly once, so concurrent double-clicks can never double-book or burn
@@ -165,7 +165,7 @@ async def actor_emails_for(
 ) -> dict[int, str]:
     """One lookup covering every actor in the given transitions, so rendering "who approved this"
     can't fan out into a query per audit row. An anonymized user has no email and is simply
-    absent from the map — the audit row itself still stands.
+    absent from the map; the audit row itself still stands.
     """
     actor_ids = {
         transition.actor_user_id
@@ -185,7 +185,7 @@ async def actor_emails_for(
 async def list_bookings_with_transitions_for_user(
     session: AsyncSession, user_id: int
 ) -> list[tuple[HITLBookingLog, list[BookingTransition]]]:
-    """Every booking this user requested, newest first, each with its own transition trail — the
+    """Every booking this user requested, newest first, each with its own transition trail. The
     approval-history tab is global so an approval doesn't disappear once its trip stops being the
     active one. Two bulk queries grouped in Python rather than one per booking.
     """

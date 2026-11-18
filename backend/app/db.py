@@ -1,7 +1,7 @@
 """Async database engine and the FastAPI session dependency.
 
 One engine per process; one session per request. Sessions are handed out through
-``get_session`` so routes never construct their own — that keeps transaction boundaries in
+``get_session`` so routes never construct their own; that keeps transaction boundaries in
 one place and makes the append-only audit writes share the caller's transaction.
 """
 
@@ -32,6 +32,6 @@ def get_engine():
 
 
 def get_session_factory() -> async_sessionmaker[AsyncSession]:
-    """For callers that can't take a ``Depends``-injected session — currently only DBOS
+    """For callers that can't take a ``Depends``-injected session, currently only DBOS
     workflows, whose arguments must be serializable and so can't carry a live session."""
     return _session_factory

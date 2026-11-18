@@ -1,5 +1,5 @@
 # PostgreSQL for reviewers who have Docker. One command: `docker compose up -d`.
-# (This machine ran Postgres via Homebrew instead — see README for both paths.)
+# (This machine ran Postgres via Homebrew instead; see README for both paths.)
 # DBOS reuses this same database for its durable-workflow system tables (own schema).
 services:
   postgres:

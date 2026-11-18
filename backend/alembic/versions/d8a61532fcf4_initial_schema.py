@@ -154,7 +154,7 @@ def upgrade() -> None:
     op.create_index(op.f('ix_booking_transition_booking_log_id'), 'booking_transition', ['booking_log_id'], unique=False)
     # ### end Alembic commands ###
 
-    # Append-only enforcement, in the DATABASE — not app discipline. A BEFORE UPDATE OR DELETE
+    # Append-only enforcement, in the DATABASE, not app discipline. A BEFORE UPDATE OR DELETE
     # trigger on each audit table raises an exception, so no application code path (and no agent)
     # can ever mutate or erase an audit row once it is written. This is the physical enforcement
     # point behind the HITL "who approved what, when" guarantee.

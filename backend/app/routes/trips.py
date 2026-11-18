@@ -9,15 +9,15 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.flights_searchapi import derive_flight_legs, get_flight_provider
-from app.agent.execution_log import execution_context
+from app.execution_log import execution_context
 from app import config
 from app.db import get_session
-from app.models import AgentRun, AgentRunStep, ExecutionEvent, TripRequest, User
+from app.models import ExecutionEvent, ExecutionRun, ExecutionStep, TripRequest, User
 from app.rate_limit import enforce_request_rate_limit
 from app.repositories import trips_repository as repository
 from app.schemas import (
-    AgentRunOut,
-    AgentRunStepOut,
+    ExecutionRunOut,
+    ExecutionStepOut,
     ExecutionEventOut,
     ExecutionPanelOut,
     FlightLegOut,
@@ -143,7 +143,7 @@ async def search_trip_flights(
     provider = get_flight_provider(config.get_settings())
     await repository.get_trip(session, trip_id)
     async with execution_context(
-        session, trip_id, run_model=flight_provider_name(provider)
+        session, trip_id, provider=flight_provider_name(provider)
     ):
         outcome = await FlightSearchService(session, provider).search(trip_id, record_run=True)
     return FlightSearchOut(
@@ -152,30 +152,28 @@ async def search_trip_flights(
     )
 
 
-def _to_agent_run_out(
-    agent_run: AgentRun,
-    steps: list[AgentRunStep],
+def _to_execution_run_out(
+    execution_run: ExecutionRun,
+    steps: list[ExecutionStep],
     events: list[ExecutionEvent],
-) -> AgentRunOut:
-    agent_run_out = AgentRunOut.model_validate(agent_run)
-    agent_run_out.steps = [AgentRunStepOut.model_validate(step) for step in steps]
-    agent_run_out.events = [ExecutionEventOut.model_validate(event) for event in events]
-    agent_run_out.estimated_cost_usd = None
-    agent_run_out.budget_utilization_pct = None
-    return agent_run_out
+) -> ExecutionRunOut:
+    execution_run_out = ExecutionRunOut.model_validate(execution_run)
+    execution_run_out.steps = [ExecutionStepOut.model_validate(step) for step in steps]
+    execution_run_out.events = [ExecutionEventOut.model_validate(event) for event in events]
+    return execution_run_out
 
 
 def _to_panel_out(
     trip_id: int,
     runs_with_details: list[
-        tuple[AgentRun, list[AgentRunStep], list[ExecutionEvent]]
+        tuple[ExecutionRun, list[ExecutionStep], list[ExecutionEvent]]
     ],
     events: list[ExecutionEvent],
 ) -> ExecutionPanelOut:
     return ExecutionPanelOut(
         trip_request_id=trip_id,
-        agent_runs=[
-            _to_agent_run_out(run, steps, run_events)
+        execution_runs=[
+            _to_execution_run_out(run, steps, run_events)
             for run, steps, run_events in runs_with_details
         ],
         events=[ExecutionEventOut.model_validate(event) for event in events],
@@ -213,7 +211,7 @@ async def get_all_execution(
     )
     return GlobalExecutionPanelOut(
         next_before_run_id=next_before_run_id,
-        agent_runs=[
-            _to_agent_run_out(run, steps, events) for run, steps, events in runs_with_details
+        execution_runs=[
+            _to_execution_run_out(run, steps, events) for run, steps, events in runs_with_details
         ]
     )

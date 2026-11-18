@@ -13,8 +13,8 @@ from sqlmodel import col, select
 
 from app.config import FLIGHT_CACHE_TTL_MINUTES
 from app.models import (
-    AgentRun,
-    AgentRunStep,
+    ExecutionRun,
+    ExecutionStep,
     ExecutionEvent,
     FlightSearchResult,
     HITLBookingLog,
@@ -55,7 +55,7 @@ async def get_trip(session: AsyncSession, trip_id: int) -> TripRequest:
 
 
 async def list_trips(session: AsyncSession, user_id: int) -> list[TripRequest]:
-    """Every trip this user has created, newest first — lets the UI recover a trip that a newer
+    """Every trip this user has created, newest first. This lets the UI recover a trip that a newer
     one has since overwritten as the client's "active" pointer."""
     return list(
         await session.scalars(
@@ -133,7 +133,7 @@ async def _trip_has_booking(session: AsyncSession, trip_id: int) -> bool:
 
 def cheapest_first(offers: list[FlightSearchResult]) -> list[FlightSearchResult]:
     """The take-home requires surfacing the cheapest flights, and the frontend lists offers in
-    the order the API returns them — so ascending price order is a backend guarantee, held on
+    the order the API returns them, so ascending price order is a backend guarantee, held on
     every path (fresh live search, own-trip reuse, cross-trip cache) so all three agree. Shared
     with services/flight_search.py, which is the only other caller."""
     return sorted(offers, key=lambda offer: offer.price_usd)
@@ -174,51 +174,51 @@ async def get_trip_snapshot(
 
 async def _execution_runs_for_trips(
     session: AsyncSession, trip_ids: list[int]
-) -> list[tuple[AgentRun, list[AgentRunStep], list[ExecutionEvent]]]:
+) -> list[tuple[ExecutionRun, list[ExecutionStep], list[ExecutionEvent]]]:
     """Every run across the given trips, newest first, each with its own steps/events."""
     if not trip_ids:
         return []
-    agent_runs = list(
+    execution_runs = list(
         await session.scalars(
-            select(AgentRun)
-            .where(col(AgentRun.trip_request_id).in_(trip_ids))
-            .order_by(col(AgentRun.started_at).desc())
+            select(ExecutionRun)
+            .where(col(ExecutionRun.trip_request_id).in_(trip_ids))
+            .order_by(col(ExecutionRun.started_at).desc())
         )
     )
-    return await _execution_run_details(session, agent_runs)
+    return await _execution_run_details(session, execution_runs)
 
 
 async def _execution_run_details(
-    session: AsyncSession, agent_runs: list[AgentRun]
-) -> list[tuple[AgentRun, list[AgentRunStep], list[ExecutionEvent]]]:
-    if not agent_runs:
+    session: AsyncSession, execution_runs: list[ExecutionRun]
+) -> list[tuple[ExecutionRun, list[ExecutionStep], list[ExecutionEvent]]]:
+    if not execution_runs:
         return []
-    run_ids = [run.id for run in agent_runs]
+    run_ids = [run.id for run in execution_runs]
     all_steps = list(
         await session.scalars(
-            select(AgentRunStep)
-            .where(col(AgentRunStep.agent_run_id).in_(run_ids))
-            .order_by(col(AgentRunStep.seq))
+            select(ExecutionStep)
+            .where(col(ExecutionStep.execution_run_id).in_(run_ids))
+            .order_by(col(ExecutionStep.seq))
         )
     )
-    steps_by_run_id: dict[int, list[AgentRunStep]] = defaultdict(list)
+    steps_by_run_id: dict[int, list[ExecutionStep]] = defaultdict(list)
     for step in all_steps:
-        steps_by_run_id[step.agent_run_id].append(step)
+        steps_by_run_id[step.execution_run_id].append(step)
     all_events = list(
         await session.scalars(
             select(ExecutionEvent)
-            .where(col(ExecutionEvent.agent_run_id).in_(run_ids))
+            .where(col(ExecutionEvent.execution_run_id).in_(run_ids))
             .order_by(col(ExecutionEvent.seq))
             .limit(1000)
         )
     )
     events_by_run_id: dict[int, list[ExecutionEvent]] = defaultdict(list)
     for event in all_events:
-        if event.agent_run_id is not None:
-            events_by_run_id[event.agent_run_id].append(event)
+        if event.execution_run_id is not None:
+            events_by_run_id[event.execution_run_id].append(event)
     return [
         (run, steps_by_run_id[run.id], events_by_run_id[run.id])
-        for run in agent_runs
+        for run in execution_runs
         if run.id
     ]
 
@@ -226,7 +226,7 @@ async def _execution_run_details(
 async def get_execution_panel(
     session: AsyncSession, trip_id: int
 ) -> tuple[
-    list[tuple[AgentRun, list[AgentRunStep], list[ExecutionEvent]]],
+    list[tuple[ExecutionRun, list[ExecutionStep], list[ExecutionEvent]]],
     list[ExecutionEvent],
 ]:
     """Every run with its own steps/events, plus the same event stream for LiveActivity."""
@@ -248,12 +248,12 @@ async def get_execution_panel(
 
 async def list_execution_runs_for_user(
     session: AsyncSession, user_id: int, *, page_size: int = 20, before_run_id: int | None = None
-) -> tuple[list[tuple[AgentRun, list[AgentRunStep], list[ExecutionEvent]]], int | None]:
-    statement = select(AgentRun).join(TripRequest).where(col(TripRequest.user_id) == user_id)
+) -> tuple[list[tuple[ExecutionRun, list[ExecutionStep], list[ExecutionEvent]]], int | None]:
+    statement = select(ExecutionRun).join(TripRequest).where(col(TripRequest.user_id) == user_id)
     if before_run_id is not None:
-        statement = statement.where(col(AgentRun.id) < before_run_id)
+        statement = statement.where(col(ExecutionRun.id) < before_run_id)
     runs = list(await session.scalars(
-        statement.order_by(col(AgentRun.id).desc()).limit(page_size + 1)
+        statement.order_by(col(ExecutionRun.id).desc()).limit(page_size + 1)
     ))
     page = runs[:page_size]
     next_before_run_id = page[-1].id if len(runs) > page_size else None

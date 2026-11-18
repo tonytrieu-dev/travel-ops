@@ -1,5 +1,5 @@
 """SearchApi.io Google Flights adapter. Strategy pattern: FlightProvider Protocol, Live vs
-Recorded selected by USE_LIVE_FLIGHT_API. Tolerant — errors/empty results return
+Recorded selected by USE_LIVE_FLIGHT_API. Tolerant; errors/empty results return
 unavailable_reason, never a fabricated offer.
 """
 
@@ -82,7 +82,7 @@ def _airport_datetime(airport: dict[str, Any]) -> str:
 
 
 def derive_flight_legs(raw_offer: dict[str, Any]) -> list[dict[str, Any]]:
-    """One entry per flown segment, in order — the connecting airport between two legs is the
+    """One entry per flown segment, in order. The connecting airport between two legs is the
     stop a traveler would ask "what is this layover?" about. Derived at read time from the same
     stored raw_offer every other offer field comes from, never a separate persisted shape."""
     return [
@@ -181,7 +181,7 @@ class LiveSearchApiProvider:
         if return_date:
             params["return_date"] = return_date
         else:
-            # SearchApi's one-way flag is flight_type=one_way, not SerpApi's type=2 convention —
+            # SearchApi's one-way flag is flight_type=one_way, not SerpApi's type=2 convention;
             # the wrong param name was silently ignored, leaving flight_type defaulted to
             # round_trip, which then 400s demanding return_date.
             params["flight_type"] = "one_way"
@@ -317,9 +317,9 @@ class LiveSearchApiProvider:
         return_date: str,
     ) -> NormalizedFlightOffer:
         """A round-trip offer's stored token is a departure_token, not a bookable booking_token
-        (see _parse_offers) — SearchApi requires a second call, passing departure_token, to get
+        (see _parse_offers). SearchApi requires a second call, passing departure_token, to get
         the return-leg options. Each of those carries its own real booking_token. The current UI
-        has no separate return-flight-selection step, so this picks the cheapest — the same
+        has no separate return-flight-selection step, so this picks the cheapest, the same
         tie-break the rest of the app already uses for "the" flight."""
         params = {
             "engine": "google_flights",
@@ -399,7 +399,7 @@ class LiveSearchApiProvider:
         if return_date:
             params["return_date"] = return_date
         else:
-            # SearchApi's one-way flag is flight_type=one_way, not SerpApi's type=2 convention —
+            # SearchApi's one-way flag is flight_type=one_way, not SerpApi's type=2 convention;
             # the wrong param name was silently ignored, leaving flight_type defaulted to
             # round_trip, which then 400s demanding return_date.
             params["flight_type"] = "one_way"
@@ -410,7 +410,7 @@ class LiveSearchApiProvider:
 
 
 class RecordedProvider:
-    """Replays a real-captured cassette — never a hand-fabricated shape."""
+    """Replays a real-captured cassette, never a hand-fabricated shape."""
 
     def __init__(self, cassette_dir: Path) -> None:
         self._cassette_dir = cassette_dir

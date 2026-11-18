@@ -89,7 +89,7 @@ type TabKey = "trip" | "trips" | "execution" | "approvals" | "connectors" | "com
 const TABS: { key: TabKey; label: string; roles: string[]; privileged?: boolean; icon: string }[] = [
   { key: "trip", label: "Find a flight", roles: ["traveler", "trip-planner", "admin"], icon: "M12 5v14m-7-7h14" },
   { key: "trips", label: "Your trips", roles: ["traveler", "trip-planner", "admin"], icon: "M4 7h16v13H4zM9 7V4h6v3" },
-  { key: "execution", label: "Agent execution history", roles: ["trip-planner", "admin"], icon: "M4 12h4l3-8 3 16 3-8h3" },
+  { key: "execution", label: "Flight search history", roles: ["trip-planner", "admin"], icon: "M4 12h4l3-8 3 16 3-8h3" },
   { key: "approvals", label: "Approval history", roles: ["trip-planner", "admin"], icon: "M5 4h14v16H5zM8 12l3 3 5-6" },
   { key: "connectors", label: "Connectors", roles: ["security-operator", "admin"], privileged: true, icon: "M9 3v5m6-5v5M7 8h10v4a5 5 0 0 1-10 0zM12 17v4" },
   { key: "compliance", label: "Security monitoring", roles: ["security-operator", "platform-operator", "admin"], privileged: true, icon: "M12 3l8 3v6c0 4-8 9-8 9s-8-5-8-9V6z" },
@@ -104,7 +104,7 @@ function App() {
   const [isBookingActionPending, setIsBookingActionPending] = useState(false)
   const tabs = TABS.filter((tab) => tab.roles.includes(role) && (!tab.privileged || mfaVerified))
   const currentTab = tabs.find((tab) => tab.key === activeTab) ?? tabs[0]
-  const canPlanTrips = ["traveler", "trip-planner", "admin"].includes(role)
+  const canAccessTrips = ["traveler", "trip-planner", "admin"].includes(role)
   const loadSession = useCallback(async () => {
     const session = await getBrowserSession()
     setRole(session.role)
@@ -130,7 +130,7 @@ function App() {
     handleStartNewSearch,
     handleSearchAgain,
     handleSelectTrip,
-  } = useActiveTrip(isAuthenticated && canPlanTrips)
+  } = useActiveTrip(isAuthenticated && canAccessTrips)
 
   useEffect(() => {
     const requireAuthentication = () => window.location.reload()

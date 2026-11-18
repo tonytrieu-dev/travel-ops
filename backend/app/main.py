@@ -52,7 +52,7 @@ def create_app() -> FastAPI:
         import sentry_sdk
 
         sentry_sdk.init(dsn=settings.sentry_dsn.get_secret_value())
-    app = FastAPI(title="Travel Agent API", version="0.1.0", lifespan=_lifespan)
+    app = FastAPI(title="TravelOps API", version="0.1.0", lifespan=_lifespan)
 
     @app.middleware("http")
     async def protect_browser_writes(request: Request, call_next):

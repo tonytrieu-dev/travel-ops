@@ -1,6 +1,6 @@
 """The audit guarantee is enforced by the DATABASE, not app discipline: BEFORE UPDATE/DELETE
 triggers on booking_transition and execution_event raise. If the trigger migration is ever
-dropped, these go red — that is the whole point.
+dropped, these go red; that is the whole point.
 """
 
 from collections.abc import Awaitable, Callable
