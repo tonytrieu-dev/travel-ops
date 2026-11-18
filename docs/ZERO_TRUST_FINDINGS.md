@@ -237,7 +237,7 @@ Docker daemon.** This is the one key area without a running-system measurement; 
 topology and gateway policy are confirmed, the live network behavior is not.
 
 A latency cost was also observed (p50 +4.3 ms, p95 +8.3 ms, −9.5% throughput over a
-100-request in-process sample in `SECURITY_EVALUATION.md`); it is reported as an aside,
+100-request in-process sample); it is reported as an aside,
 not a hypothesis; the sample is too small for tail percentiles (p99 would need a larger
 run) and excludes real network, TLS, and reverse-proxy cost.
 
@@ -268,7 +268,7 @@ students write their own report interpretation and disclose assistance as requir
    Evidence: the containment test above and
    `test_monitoring_requires_operator_mfa_and_hides_other_tenants` in that file.
 
-Use the existing isolated-PostgreSQL test instructions in `SECURITY_EVALUATION.md`.
+Use the isolated-PostgreSQL test instructions in [the README](../README.md#5-tests).
 These scenarios use synthetic data and stub providers. The current standalone
 `scripts.security_demo` uses a missing-trip denial loop rather than the full
 cross-tenant assessment scenario; do not describe its output as proof of all
@@ -381,8 +381,8 @@ prose now distinguishes historical results from current coverage.
   `backend/tests/test_security_integration.py`. Current coverage is the stronger
   `test_failed_authentication_records_target_without_verified_actor` regression,
   which also checks persisted attribution for password and MFA failures.
-- No new latency benchmark was authorized or run. Numbers in
-  `SECURITY_EVALUATION.md` are historical, not measurements of current fixes.
+- No new latency benchmark was authorized or run. Historical latency numbers are not
+  measurements of current fixes.
 - No production deployment, application-database migration, live provider call,
   real purchase, browser end-to-end check or independent penetration test is
   established by this work.
@@ -464,8 +464,8 @@ code and passed after. No application code path was left without a runnable chec
 Also corrected: the `README` zero-trust demo omitted the `uvicorn` start step and copied a native
 `DATABASE_URL` mismatched with the Docker service, and overstated booking-options provider-failure
 preservation beyond what a regression actually asserted. The current regression now verifies that
-provider failure preserves `CONFIRMED` and returns a retryable error (see `README.md`,
-`SECURITY_EVALUATION.md`, and `test_booking_regressions.py`).
+provider failure preserves `CONFIRMED` and returns a retryable error (see `README.md` and
+`test_booking_regressions.py`).
 
 ### October 29 architecture-review validation
 

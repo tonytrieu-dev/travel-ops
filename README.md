@@ -17,36 +17,13 @@ before/after evidence, design limits and three-scenario security demonstration.
 
 ## Zero-trust architecture
 
-Zero-trust enforcement is mandatory; `ZERO_TRUST_ENFORCED=false` fails startup. Every protected
-API route requires a verified session, supplied through a browser cookie or short-lived bearer
-token. The local issuer uses custom HMAC-signed tokens,
-passwords, and TOTP; it does not implement OIDC discovery or standard OIDC token validation.
-With no `ZERO_TRUST_SIGNING_SECRET` set, the app generates a fresh per-process signing key; set an explicit secret
-for a deployment whose tokens must survive a restart. Production should put Keycloak or another
-OIDC provider in front of the API and use mTLS/service-mesh identity for internal traffic.
-
-The SPA signs in through `POST /api/auth/browser/login` and
-`POST /api/auth/browser/mfa`. The API sets a 15-minute HttpOnly, SameSite=Strict cookie;
-browser responses omit the bearer token. Requests include cookies, and browser writes
-must send the configured `FRONTEND_ORIGIN`. HTTPS is required outside loopback development;
-use the same site for the frontend and API so Strict cookies are sent. The original
-`/api/auth/login` and `/api/auth/mfa` endpoints remain available to bearer-token CLI clients.
-Set `ZERO_TRUST_SIGNING_SECRET` and use the seeded demo credentials or a
-local user; MFA-enabled users must complete the TOTP step. Connector settings are deployment-wide,
-not tenant-owned, and both reading and changing them require the `security-operator` or `admin` role
-plus verified MFA.
-
-Slack approval callbacks and notifications are disabled while enforcement is enabled, even
-with credentials configured. Slack users are not mapped to trip owners or verified application
-sessions; approve and cancel bookings in the app. The legacy Slack flow is test-only.
-
-Device IDs demonstrate consistency between submitted and stored identity attributes; they do not
-prove device health or hardware attestation. The isolated deployment adds mutual TLS
-and private service networks; see [deployment instructions](#running-it). See the [trust boundaries](docs/ARCHITECTURE.md#zero-trust-enterprise-network-overlay).
+The application requires verified sessions on protected routes. The isolated deployment adds
+mutual TLS and private service networks. See the [architecture](docs/ARCHITECTURE.md) for the
+security model, trust boundaries, and known limits.
 
 ## Start here
 
-- [Architecture](#architecture): the system boundary and critical request path.
+- [Architecture](docs/ARCHITECTURE.md): the system boundary and critical request path.
 - [Zero Trust control plane](docs/ARCHITECTURE.md#zero-trust-enterprise-network-overlay): how the
   five required areas (identity and access management, MFA, segmentation, continuous monitoring,
   incident response) map to concrete controls, and what is deliberately out of scope.
@@ -103,78 +80,15 @@ stubbed external providers; they do not purchase flights or consume model/search
 If the booking-options provider is unavailable, execution stays confirmed and the user can retry;
 the app does not create a terminal handoff without checkout links.
 
-## Security demonstration
-
-Use three scenarios to show the bounded prototype:
-
-1. **Legitimate access:** a traveler completes MFA and reads an owned trip. A
-   password-only session cannot approve a booking.
-2. **Unauthorized access and containment:** a tenant-A traveler attempts to read
-   tenant B's booking. Five denied reads trigger session revocation; the next
-   protected request with that token returns 401.
-3. **Operator evidence:** an MFA-verified operator inspects the linked incident
-   and assessment evidence. Show pass, fail and insufficient evidence honestly;
-   a database-owner application role should fail the audit-protection assessment.
-
-The [findings document](docs/ZERO_TRUST_FINDINGS.md#presentation-scope-and-three-scenario-demonstration)
-maps these scenarios to actual tests and explains the before/after design. With an isolated
-PostgreSQL test database, run from `backend`:
-
-```bash
-uv run pytest -q tests/test_security_integration.py tests/test_compliance.py
-```
-
-These tests use synthetic accounts and stub external providers. They do not
-purchase flights or spend model/search quota. The standalone HTTP script above
-is a smaller missing-resource walkthrough; it does not cover the full
-cross-tenant assessment scenario. Browser rehearsal remains separate work.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    UI[React frontend] -->|HTTPS with client certificate| Gateway[Certificate gateway]
-    Gateway -->|REST /api and verified device headers| API[FastAPI]
-    API --> Admission[Security admission]
-    Admission --> Repo[Repositories]
-    Repo --> DB[(Postgres 16)]
-    API --> Agent[Pydantic AI planner]
-    Agent -->|search_flights| Flights[Flight provider]
-    Agent -->|web_search| Activities[Activity provider]
-    Flights --> SearchApi[(SearchApi.io)]
-    Activities --> Tavily[(Tavily API)]
-    Agent --> Cerebras[(Cerebras gpt-oss-120b)]
-    DBOS[DBOS workflows] -.->|durable planner run| Agent
-    DBOS -.->|durable booking execute| Repo
-    DBOS --> DB
-    API -->|connector settings| ConnSetting[(connector_setting)]
-    API -.->|legacy test harness only| Slack[Legacy Slack approval connector]
-    Slack -.->|disabled in runtime| API
-```
-
-The critical boundary is deliberate: the LLM researches and proposes; deterministic application
-code owns booking state, durability, and accountability.
-
-See [the detailed request path and durability model](docs/ARCHITECTURE.md#the-critical-request-path)
-for the DBOS workflow boundary and replay behavior.
-
-Booking state, audit guarantees, provider failure behavior, and DBOS recovery are documented in
-the [architecture](docs/ARCHITECTURE.md) doc.
-
 ## Project status and limitations
 
-Security monitoring now includes recurring MFA, audit-protection, and session-containment checks.
-See the [implementation, findings, and demonstration steps](docs/ZERO_TRUST_FINDINGS.md).
-
 This is a portfolio and reference implementation intended for local development and evaluation.
-It is not a production travel service; testing includes only modest local load, with no independent
-security audit. The local password/TOTP issuer and tenant/owner checks are bounded demonstration
-controls, not a production identity or device-management system. Activity citations show that a URL came from the
-configured search provider; they do not independently verify every generated claim. The booking
-flow returns third-party checkout links and does not reserve, purchase, or hold a fare.
+It is not a production travel service. It has no independent security audit or production-scale
+load test. The booking flow returns third-party checkout links and does not reserve, purchase, or
+hold a fare.
 
-See the [trust boundaries](docs/ARCHITECTURE.md#zero-trust-enterprise-network-overlay) for the
-detailed runtime, security, recovery, and integration limitations.
+See the [findings](docs/ZERO_TRUST_FINDINGS.md) and [architecture](docs/ARCHITECTURE.md) for
+security evidence and detailed limitations.
 
 ## What it does
 
@@ -418,18 +332,7 @@ Use a migrated, disposable PostgreSQL database whose name ends in `_test` or `_t
 and set `TEST_DATABASE_URL` to its asyncpg URL. Database tests truncate their tables between
 cases; never point them at application data.
 
-Latest local validation (2026-11-17): all 158 backend tests passed against a freshly migrated,
-disposable PostgreSQL 14.24 database. All eight frontend test files, backend type checking,
-frontend production build/lint, shell syntax checks, and Compose configuration validation passed.
-Docker runtime and live TLS/network isolation remain unverified; see the
-[validation record](docs/ZERO_TRUST_FINDINGS.md). The remaining npm audit findings are an
-unpatched picomatch advisory in build tooling; SHA-1 is retained only for RFC 6238 TOTP
-interoperability, not password hashing.
-
-The zero-trust decision path (identity-claim verification, role/MFA policy, tenant ownership,
-browser segment spoofing, denial-threshold containment) is exercised against a live PostgreSQL
-instance by `tests/test_security.py`; the append-only audit guarantee is enforced by a database
-trigger and checked in `tests/test_append_only.py`.
+See the [validation record](docs/ZERO_TRUST_FINDINGS.md) for dated results and known gaps.
 
 Run the frontend checks separately:
 
@@ -440,16 +343,3 @@ npm test
 npm run lint
 npm run build
 ```
-
-### 6. Security enforcement and regression checks
-
-`ZERO_TRUST_ENFORCED=false` now fails startup. Legacy route tests use a test-only settings
-copy; runtime approvals always use authenticated ownership, role and MFA checks. The Slack
-approval implementation remains disabled until it can enforce those checks.
-
-Run the checks above before merging. Full deployment validation also requires the isolated
-Compose network, certificate, and database-permission checks described above.
-
-Execution history is paged across owned trips: `GET /api/execution` accepts `page_size`
-(1–100, default 20) and `before_run_id`, and returns `next_before_run_id` when older runs
-exist. The UI provides Newer/Older controls; filters apply to the current page.
