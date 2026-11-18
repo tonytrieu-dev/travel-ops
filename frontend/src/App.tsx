@@ -61,7 +61,7 @@ export function LoginPanel({ onAuthenticated }: { onAuthenticated: () => void | 
   return (
     <main className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
       <form onSubmit={sessionId ? submitMfa : submitLogin} className="w-full max-w-sm space-y-4 rounded-xl bg-white p-6 shadow">
-        <h1 className="text-2xl font-bold">Travel Agent sign in</h1>
+        <h1 className="text-2xl font-bold">TravelOps sign in</h1>
         {!sessionId ? (
           <>
             <input aria-label="Email" required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email" className="w-full rounded border p-2" />
@@ -163,7 +163,7 @@ function App() {
       <aside className={`m-3 flex shrink-0 flex-col rounded-2xl border border-slate-200 bg-white shadow-sm md:sticky md:top-3 md:h-[calc(100vh-1.5rem)] ${sidebarCollapsed ? "md:w-20" : "md:w-72"}`}>
         <div className={`flex items-center gap-2 border-b border-slate-200 py-5 ${sidebarCollapsed ? "justify-center px-2" : "justify-between px-5"}`}>
           <h1 className={sidebarCollapsed ? "sr-only" : "text-xl font-bold tracking-tight text-slate-900"}>
-            Travel Agent
+            TravelOps
           </h1>
           <button type="button" aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
             aria-expanded={!sidebarCollapsed} aria-controls="primary-navigation"
