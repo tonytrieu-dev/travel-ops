@@ -1,4 +1,4 @@
-"""DBOS durable-execution wiring: booking execute and flight-search runs replay-safe across crashes.
+"""DBOS durable-execution wiring: booking execute and booking-options fetch replay-safe across crashes.
 
 Both entry points take only serializable arguments (a DBOS constraint) and rebuild whatever
 session/provider they need internally, rather than receiving them injected; this is the only

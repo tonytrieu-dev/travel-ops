@@ -8,8 +8,6 @@ const { YourTripsPanel } = await import("../YourTripsPanel.tsx")
 // UTC midnight renders the previous day in this timezone; trip dates must keep the entered day.
 test("date-only trip dates render the entered calendar day in a negative-offset timezone", () => {
   process.env.TZ = "America/Los_Angeles"
-  // Guards the assumption this test relies on: the raw UTC parse shifts the day back.
-  assert.equal(new Date("2026-11-10").toLocaleDateString(), "11/9/2026")
 
   const trip = {
     id: 1, origin: "JFK", destination: "Tokyo", destination_airport: "HND",

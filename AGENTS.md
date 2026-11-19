@@ -16,7 +16,7 @@ Repo instructions for coding agents working on TravelOps.
 ## Architecture (enforced)
 DI (`Depends`) · Finite State Machine (`app/state.py`) · Repository (`app/repositories/`) ·
 Strategy (`FlightProvider`: Live vs Recorded by `USE_LIVE_FLIGHT_API`) · Durable Execution
-(DBOS wraps booking `execute` and the flight-search execution run).
+(DBOS wraps booking `execute` and booking-options fetch).
 
 ## TravelOps system
 

@@ -15,8 +15,7 @@ flowchart LR
     DBOS --> DB
 ```
 
-TravelOps is deterministic application code. There is no LLM, planner, activity researcher, BAML
-source, or model-provider credential in the runtime or deployment.
+TravelOps is deterministic application code; flight search uses the configured provider strategy.
 
 ## Main paths
 
@@ -52,8 +51,4 @@ evidence remain persisted. The `itinerary` table is removed by forward Alembic m
 `f6a7b8c9d012`; existing itinerary data is intentionally discarded because this is a disposable
 demo and the feature no longer exists.
 
-## Known limits
-
-This is not production certification. Enterprise identity, hardware attestation, managed
-certificate revocation, airline fare holds, and purchasing remain outside scope. The app hands the
-user a provider checkout link; it does not complete the purchase.
+Security scope and remaining limits are documented in [ZERO_TRUST_FINDINGS.md](ZERO_TRUST_FINDINGS.md).

@@ -1,8 +1,7 @@
 # Zero-trust findings
 
-TravelOps remains a zero-trust prototype after the LLM/planner removal. The simplification
-removed model-provider and web-research credentials; it did not weaken the request boundary,
-booking state machine, or audit controls.
+TravelOps is a zero-trust prototype. Flight search is deterministic and does not alter the request
+boundary, booking state machine, or audit controls.
 
 ## Current controls
 
