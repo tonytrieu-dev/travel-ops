@@ -1,9 +1,3 @@
-### What does TravelOps actually do?
-
-It automates the search, not the traveler's decision. A traveler enters a route and dates; the
-application calls a configured flight provider, normalizes and ranks the results, and returns
-reviewable options with fare, schedule, and source details. The traveler chooses the flight.
-
 ### What makes this a zero-trust application?
 
 Every protected request is checked at admission. The gateway verifies the device certificate,
