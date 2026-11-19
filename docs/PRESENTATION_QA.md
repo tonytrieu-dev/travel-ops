@@ -1,61 +1,42 @@
-### 1. How are the device certificates created, and where do they come from?
+# Presentation Q&A
 
-They are created locally by `deploy/issue-device.py` with OpenSSL. The first run creates a
-private, local certificate authority; each later run creates a device key and certificate signed
-by that authority. This demo does not use a public certificate provider. The CA private key is
-kept separately in `.device-authority`, while the browser gets a device `.p12` bundle.
+Short answers for the live Q&A. Lead with the first sentence and stop unless someone asks for
+more detail.
 
-### 2. What do the local CA and browser `.p12` files do?
+### What does TravelOps actually do?
 
-The local CA is the trust anchor: the gateway trusts certificates signed by it. The `.p12` file
-bundles one device's private key, certificate, and CA certificate so the browser can present that
-device identity during mutual TLS. Its matching `.password` file protects the import. The gateway
-checks the certificate before forwarding API traffic, and the backend checks the gateway's
-secret-authenticated verification headers before accepting the device identity.
+It automates the search, not the traveler's decision. A traveler enters a route and dates; the
+application calls a configured flight provider, normalizes and ranks the results, and returns
+reviewable options with fare, schedule, and source details. The traveler chooses the flight.
 
-### 3. Is a certificate alone enough to access the system?
+### What makes this a zero-trust application?
 
-No. It proves possession of the registered device, not that the user is authorized. A protected
-request also needs a valid session whose claims still match the database, the right tenant and
-role, resource ownership, and MFA when required. The deployment adds private service networks,
-so the API and database are not directly exposed to the host.
+Every protected request is checked at admission. The gateway verifies the device certificate,
+then the application checks the live session, identity, tenant, role, MFA, and ownership before
+allowing or denying the request. A request is not trusted just because it came through the network.
 
-### 4. What happens if the system crashes during booking?
+### Where do the device certificates come from?
 
-Booking is gated by a human approval state transition. The booking execution and the external
-booking-options lookup run through DBOS durable execution, so the workflow can resume or replay
-after a process failure instead of relying on an in-memory task. The application still hands the
-user to a carrier or OTA checkout page; it does not buy the ticket or promise a fare hold.
+For this local demo, they are created locally with OpenSSL. The first run creates a private local
+certificate authority, and each device certificate is signed by it. The browser imports a `.p12`
+file containing the device identity and private key; the gateway uses it to verify the device.
+That is a demo trust system, not enterprise certificate management.
 
-### 5. How do you know what happened, and how repeatable is the demo?
+### What did you actually verify?
 
-Security decisions, booking transitions, execution events, and monitoring assessments are stored
-as append-only audit data. Database triggers reject updates, deletes, and truncation of those
-records, and the runtime database role cannot mutate them. Flight search uses either the live
-SearchApi provider or recorded real-response fixtures, selected by configuration. Recorded mode
-makes tests and demonstrations repeatable without inventing flight results; searches are also
-cached for 15 minutes.
+We tested the security boundaries, not just the happy path: cross-tenant access is denied,
+tampered tokens are rejected, security records are append-only, and repeated denials revoke a
+session. The isolated-stack boundary check also showed that an uncertified request is rejected,
+the gateway cannot reach PostgreSQL directly, and the runtime role cannot mutate the audit data.
 
-## Backup questions
+### Why is MFA required for some actions?
+
+The system separates ordinary reading from privileged operations. A password-only session can
+perform an ordinary read, but a protected security operation returns “MFA required” until the
+user completes TOTP verification. That limits the impact of a stolen or incomplete session.
 
 ### What are the main limitations?
 
-This is a zero-trust prototype, not a production certification. It does not provide enterprise
+This is a zero-trust prototype, not a production certification. It does not include enterprise
 identity integration, hardware attestation, managed certificate revocation, an independent
-security assessment, fare holds, or airline purchasing. Those are explicit boundaries, not claims
-the demo is making.
-
-### What exactly is tested?
-
-The backend has unit and PostgreSQL integration tests for authentication, MFA, tenant and
-ownership policy, concurrency, migrations, provider behavior, durable booking paths, and
-append-only enforcement. The frontend has Node/jsdom component and API tests plus a production
-build. There is not yet a browser end-to-end test suite.
-
-### Why call this zero trust?
-
-Because each protected request is checked against current evidence rather than trusted solely
-because it came from the network. The checks include session validity, device identity, tenant,
-role, ownership, and MFA. Repeated denials are recorded and can trigger incident creation and
-session containment. “Zero trust” here describes the control pattern, not a guarantee that every
-enterprise control has been implemented.
+security assessment, or automatic airline purchasing.
