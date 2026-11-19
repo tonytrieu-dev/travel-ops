@@ -1,10 +1,3 @@
-# Presentation Q&A
-
-Use these as short spoken answers. The demo is an eight-minute presentation, so answer the
-question directly and stop unless someone asks for more detail.
-
-## Primary questions
-
 ### 1. How are the device certificates created, and where do they come from?
 
 They are created locally by `deploy/issue-device.py` with OpenSSL. The first run creates a
@@ -66,10 +59,3 @@ because it came from the network. The checks include session validity, device id
 role, ownership, and MFA. Repeated denials are recorded and can trigger incident creation and
 session containment. “Zero trust” here describes the control pattern, not a guarantee that every
 enterprise control has been implemented.
-
-### What does the provider strategy buy you?
-
-It keeps application behavior independent of whether the source is live SearchApi data or a
-recorded response. The same search service handles validation, caching, ordering, persistence,
-and activity logging. That gives a realistic live path and a deterministic path for tests and
-presentations without adding an LLM or planner.
