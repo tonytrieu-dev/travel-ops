@@ -1,8 +1,3 @@
-# Presentation Q&A
-
-Short answers for the live Q&A. Lead with the first sentence and stop unless someone asks for
-more detail.
-
 ### What does TravelOps actually do?
 
 It automates the search, not the traveler's decision. A traveler enters a route and dates; the
