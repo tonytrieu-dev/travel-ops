@@ -13,7 +13,7 @@ That is a demo trust system, not enterprise certificate management.
 
 ### What did you actually verify?
 
-We tested the security boundaries, not just the happy path: cross-tenant access is denied,
+I tested the security boundaries, not just the happy path: cross-tenant access is denied,
 tampered tokens are rejected, security records are append-only, and repeated denials revoke a
 session. The isolated-stack boundary check also showed that an uncertified request is rejected,
 the gateway cannot reach PostgreSQL directly, and the runtime role cannot mutate the audit data.
